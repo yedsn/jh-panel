@@ -12,6 +12,8 @@ var hmlState = {
   pair_name: '',
   monitor_url: '',
   monitor_enabled: false,
+  cloud_config_status: 'disabled',
+  cloud_last_error: '',
   report_interval: 30,
   last_report_at: '',
   last_action: '等待操作',
@@ -71,7 +73,7 @@ function hmlFlowGuideConfig(step) {
 }
 
 function hmlMonitorEnabled() {
-  return !!hmlState.monitor_url && !!hmlState.monitor_enabled;
+  return !!hmlState.monitor_url && !!hmlState.monitor_enabled && !!hmlState.pair_id;
 }
 
 function hmlBoot() {
@@ -467,13 +469,14 @@ function hmlInput(label, name, value, style, type, placeholder) {
 function hmlRenderMonitor() {
   var configured = !!hmlState.monitor_url;
   var enabled = hmlMonitorEnabled();
-  var html = '<div class="hml-section"><div class="hml-section-head"><div><div class="hml-section-title">绑定云监控配置</div><div class="hml-section-sub">配置本机 ID、主备关系 ID、云监控地址和总开关。关闭后不上报状态，也不启用云监控相关能力。</div></div>' + (configured ? hmlPill(enabled ? 'ok' : 'warn', enabled ? '已启用' : '未启用') : hmlPill('warn', '未配置')) + '</div><div class="hml-section-body"><form class="bt-form hml-form" id="hmlMonitorForm">' +
+  var statusText = !configured ? '未配置云监控地址，云监控相关功能未启用。' : (!hmlState.pair_id ? '主备关系 ID 未填写，无法上报。' : (enabled ? '云监控已启用，本机状态将按周期上传。' : '已配置云监控地址，但云监控开关已关闭。'));
+  var html = '<div class="hml-section"><div class="hml-section-head"><div><div class="hml-section-title">绑定云监控配置</div><div class="hml-section-sub">配置本机 ID、主备关系 ID、云监控地址和总开关。上报仅使用主备关系 ID。</div></div>' + (configured ? hmlPill(enabled ? 'ok' : 'warn', enabled ? '已启用' : '未启用') : hmlPill('warn', '未配置')) + '</div><div class="hml-section-body"><form class="bt-form hml-form" id="hmlMonitorForm">' +
     '<div class="line"><span class="tname">本机ID</span><div class="info-r hml-inline-actions"><input class="bt-input-text" type="text" name="host_id" value="' + hmlHtml(hmlState.host_id) + '" style="width:360px" readonly /><button type="button" class="btn btn-default btn-sm" onclick="hmlRegenerateHostId()">重新生成</button></div></div>' +
     hmlInput('主备关系ID', 'pair_id', hmlState.pair_id, 'width:360px') +
     hmlInput('云监控地址', 'monitor_url', hmlState.monitor_url, 'width:420px', 'text', '例如：http://192.168.100.1:10844') +
     '<div class="line"><span class="tname">是否启用</span><div class="info-r c4"><label class="hml-monitor-switch"><input type="checkbox" name="monitor_enabled" value="1" ' + (hmlState.monitor_enabled ? 'checked' : '') + '><span class="hml-switch-slider"></span></label></div></div>' +
-    '<div class="line"><span class="tname">状态</span><div class="info-r c4">' + hmlHtml(enabled ? '云监控已启用，本机状态允许上传到云监控。' : (configured ? '已配置云监控地址，但云监控开关已关闭，不会上报状态。' : '未配置云监控地址，云监控相关功能未启用。')) + '</div></div>' +
-    '<div class="line"><span class="tname"></span><div class="info-r hml-inline-actions"><button type="button" class="btn btn-default btn-sm" onclick="hmlSaveMonitor()">测试并注册</button><button type="button" class="btn btn-success btn-sm" onclick="hmlSaveMonitor(true)">保存并注册</button><button type="button" class="btn btn-default btn-sm" onclick="hmlReportState()">立即上报</button><button type="button" class="btn btn-warning btn-sm" onclick="hmlClearMonitor()">清空地址</button></div></div>' +
+    '<div class="line"><span class="tname">状态</span><div class="info-r c4">' + hmlHtml(statusText) + (hmlState.cloud_last_error ? '<div class="hml-tip mt10">最近失败：' + hmlHtml(hmlState.cloud_last_error) + '</div>' : '') + '</div></div>' +
+    '<div class="line"><span class="tname"></span><div class="info-r hml-inline-actions"><button type="button" class="btn btn-success btn-sm" onclick="hmlSaveMonitor(true)">保存配置</button><button type="button" class="btn btn-default btn-sm" onclick="hmlReportState()">立即上报</button><button type="button" class="btn btn-warning btn-sm" onclick="hmlClearMonitor()">清空地址</button></div></div>' +
   '</form></div></div>';
   $('.soft-man-con').html(html);
 }
@@ -491,7 +494,7 @@ function hmlSaveMonitor(report) {
   var data = hmlReadMonitorForm();
   hmlPost('save_monitor', data, function(next) {
     hmlState = $.extend(true, hmlState, next);
-    layer.msg(report === true ? '已保存配置' : '配置已保存', {icon: hmlMonitorEnabled() ? 1 : 0});
+    layer.msg('配置已保存', {icon: hmlMonitorEnabled() ? 1 : 0});
     hmlRenderMonitor();
   });
 }
@@ -501,7 +504,7 @@ function hmlReportState() {
   if (!hmlMonitorEnabled()) return layer.msg('云监控未启用，当前不会上传状态', {icon: 0});
   hmlPost('report_state', {}, function(next) {
     hmlState = $.extend(true, hmlState, next);
-    layer.msg('本机状态已刷新', {icon: 1});
+    layer.msg('本机状态已上报', {icon: 1});
     hmlRenderMonitor();
   });
 }

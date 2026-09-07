@@ -13,5 +13,15 @@
   "date": "2026-08-29",
   "home": "https://cn.jianghujs.org/",
   "type": "soft",
-  "pid": "4"
+  "pid": "4",
+  "tasks": [
+    {
+      "func": "report_state_task",
+      "title": "上报本地版主备状态",
+      "args": {},
+      "interval": 10,
+      "timeout": 20,
+      "enabled": true
+    }
+  ]
 }

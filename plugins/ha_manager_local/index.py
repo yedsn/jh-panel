@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 import urllib.parse
+import urllib.request
+import urllib.error
 import tempfile
 
 if __name__ == '__main__' and len(sys.argv) > 1 and sys.argv[1] == 'status':
@@ -23,7 +25,7 @@ from value_tool import safeBool
 
 PLUGIN_NAME = 'ha_manager_local'
 PLUGIN_DIR = os.path.join(PANEL_DIR, 'plugins', PLUGIN_NAME)
-RUNTIME_DIR = '/www/server/ha_manager_local'
+RUNTIME_DIR = os.environ.get('HA_MANAGER_LOCAL_RUNTIME_DIR', '/www/server/ha_manager_local')
 DATA_DIR = os.path.join(RUNTIME_DIR, 'data')
 LOG_DIR = os.path.join(RUNTIME_DIR, 'logs')
 STEP_LOG_DIR = os.path.join(LOG_DIR, 'steps')
@@ -31,6 +33,7 @@ VERSION_PATH = os.path.join(RUNTIME_DIR, 'version.pl')
 CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 STATE_PATH = os.path.join(DATA_DIR, 'state.json')
 STEP_STATE_PATH = os.path.join(DATA_DIR, 'step_state.json')
+REPORT_STATE_PATH = os.path.join(DATA_DIR, 'cloud_report_state.json')
 ROLE_PATH = os.path.join(RUNTIME_DIR, 'role')
 LOCK_PATH = os.path.join(DATA_DIR, 'switch.lock')
 ACTION_LOG_PATH = os.path.join(LOG_DIR, 'actions.log')
@@ -149,6 +152,7 @@ def _write_role(role):
     cfg['desired_role'] = role
     cfg['switch_status'] = 'idle'
     _save_config(cfg)
+    _queue_cloud_report('role_changed')
     return cfg
 
 
@@ -164,6 +168,10 @@ def _default_config():
         'monitor_enabled': False,
         'report_interval': 30,
         'last_report_at': '',
+        'cloud_registered': False,
+        'cloud_last_error': '',
+        'cloud_report_queue': [],
+        'cloud_active_task_id': '',
         'role': role,
         'desired_role': role,
         'switch_status': 'idle',
@@ -177,6 +185,7 @@ def _config(save_missing=True):
     cfg = _default_config()
     saved = _read_json(CONFIG_PATH, {})
     cfg.update(saved)
+    cfg.pop('api_secret', None)
     if 'monitor_enabled' in saved:
         cfg['monitor_enabled'] = safeBool(cfg.get('monitor_enabled'), False)
     else:
@@ -196,7 +205,99 @@ def _config(save_missing=True):
 
 
 def _monitor_enabled(cfg):
-    return bool(cfg.get('monitor_url') and safeBool(cfg.get('monitor_enabled'), False))
+    return bool(cfg.get('monitor_url') and cfg.get('pair_id') and safeBool(cfg.get('monitor_enabled'), False))
+
+
+def _public_config(cfg):
+    data = dict(cfg or {})
+    data.pop('cloud_report_queue', None)
+    return data
+
+
+def _report_state_data():
+    data = _read_json(REPORT_STATE_PATH, {})
+    return data if isinstance(data, dict) else {}
+
+
+def _save_report_state(data):
+    _write_json(REPORT_STATE_PATH, data if isinstance(data, dict) else {})
+
+
+def _monitor_base_url(value):
+    value = str(value or '').strip().rstrip('/')
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        return ''
+    return value
+
+
+def _cloud_endpoint(cfg, path):
+    base = _monitor_base_url(cfg.get('monitor_url'))
+    if not base:
+        return ''
+    return base + '/ha/api/local/' + path.lstrip('/')
+
+
+def _cloud_http(cfg, path, payload):
+    url = _cloud_endpoint(cfg, path)
+    if not url:
+        return False, '云监控地址无效', {}
+    try:
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        request_obj = urllib.request.Request(url, data=body, headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(request_obj, timeout=10) as response:
+            raw = response.read().decode('utf-8', errors='replace')
+        data = json.loads(raw)
+        if not isinstance(data, dict) or not data.get('status'):
+            return False, str((data or {}).get('msg') or '云监控返回失败'), data if isinstance(data, dict) else {}
+        return True, '', data.get('data') or {}
+    except urllib.error.HTTPError as e:
+        return False, '云监控HTTP错误: {0}'.format(e.code), {}
+    except Exception as e:
+        return False, '云监控连接失败: {0}'.format(str(e)[:200]), {}
+
+
+def _cloud_task_id_for_run(run_id):
+    source = str(run_id or '').strip()
+    marker = source.rfind('_LOCAL_')
+    if marker > 0:
+        source = source[:marker]
+    source = ''.join([ch for ch in source if ch.isalnum() or ch in ('_', '-')])[:96]
+    return 'TASK_' + (source or ('LOCAL_' + time.strftime('%Y%m%d%H%M%S', time.localtime())))
+
+
+def _record_cloud_log(run_id, text):
+    if not run_id or not text:
+        return
+    cfg = _config(False)
+    task_id = str(cfg.get('cloud_active_task_id') or '').strip()
+    if not task_id:
+        return
+    state = _report_state_data()
+    task = (state.setdefault('tasks', {})).setdefault(task_id, {'next_seq': 1, 'logs': []})
+    for line in _split_lines(text):
+        seq = int(task.get('next_seq') or 1)
+        task['logs'].append({
+            'seq': seq,
+            'timestamp': _now(),
+            'level': 'error' if '失败' in line or '异常' in line else 'info',
+            'stage': 'local_switch',
+            'step': str(run_id)[:255],
+            'message': str(line)[:4000]
+        })
+        task['next_seq'] = seq + 1
+    _save_report_state(state)
+
+
+def _queue_cloud_report(reason=''):
+    cfg = _config(False)
+    if not cfg.get('monitor_url') or not safeBool(cfg.get('monitor_enabled'), False):
+        return
+    queue = cfg.get('cloud_report_queue') if isinstance(cfg.get('cloud_report_queue'), list) else []
+    if reason and reason not in queue:
+        queue.append(reason)
+    cfg['cloud_report_queue'] = queue[-20:]
+    _save_config(cfg)
 
 
 def _write_panel_title_state(cfg):
@@ -235,6 +336,7 @@ def _append_step_log(run_id, text):
     path = _step_log_path(run_id)
     with open(path, 'a', encoding='utf-8') as fp:
         fp.write(str(text).rstrip('\n') + '\n')
+    _record_cloud_log(run_id, text)
     return path
 
 
@@ -906,7 +1008,7 @@ def _state(cfg=None):
     role = cfg.get('role') or _read_role()
     checks = _health_checks(role)
     health_status, health_text = _health_summary(checks)
-    data = cfg.copy()
+    data = _public_config(cfg)
     data.update({
         'role': role,
         'desired_role': cfg.get('desired_role') or role,
@@ -919,8 +1021,130 @@ def _state(cfg=None):
         'log': _read_logs(),
         'last_action': cfg.get('last_action') or '等待操作'
     })
+    data['cloud_config_status'] = 'ready' if _monitor_enabled(cfg) else ('missing_pair_id' if cfg.get('monitor_url') and safeBool(cfg.get('monitor_enabled'), False) else 'disabled')
+    data['cloud_last_error'] = cfg.get('cloud_last_error') or ''
+    data['cloud_registered'] = bool(cfg.get('cloud_registered'))
     _write_json(STATE_PATH, data)
     return data
+
+
+def _cloud_health_status(state):
+    checks = state.get('checks') or []
+    if any(item.get('status') == 'fail' for item in checks):
+        return 'danger'
+    if any(item.get('status') == 'warning' for item in checks):
+        return 'warning'
+    return 'normal'
+
+
+def _cloud_task_summary(cfg, state):
+    task_id = str(cfg.get('cloud_active_task_id') or '').strip()
+    if not task_id:
+        return None
+    run_id = str(cfg.get('cloud_active_run_id') or '').strip()
+    task_state = str(cfg.get('switch_status') or 'idle')
+    if task_state == 'running':
+        status = 'running'
+    elif task_state == 'failed':
+        status = 'failed'
+    else:
+        status = 'success'
+    step_state = _step_state()
+    summary = []
+    current_step = ''
+    next_step = ''
+    for role, steps in step_state.items():
+        if not isinstance(steps, dict):
+            continue
+        for key, item in steps.items():
+            if not isinstance(item, dict) or item.get('run_id') != run_id:
+                continue
+            summary.append({'step': key, 'status': item.get('state') or 'pending', 'updated_at': item.get('updated_at') or ''})
+            if item.get('state') in ('running', 'failed'):
+                current_step = key
+    if not current_step:
+        current_step = cfg.get('last_action') or ''
+    if status == 'running':
+        next_step = '等待当前步骤完成'
+    return {
+        'switch_task_id': task_id,
+        'target_role': cfg.get('desired_role') if cfg.get('desired_role') in ('master', 'standby') else cfg.get('role'),
+        'status': status,
+        'status_text': cfg.get('last_action') or '',
+        'current_step': current_step,
+        'next_step': next_step,
+        'step_summary': summary,
+        'started_at': cfg.get('cloud_task_started_at') or '',
+        'finished_at': _now() if status in ('success', 'failed') else ''
+    }
+
+
+def _cloud_snapshot(cfg, state):
+    return {
+        'pair_id': cfg.get('pair_id') or '',
+        'host_id': cfg.get('host_id') or _host_id(),
+        'host_name': cfg.get('host_name') or _panel_title(),
+        'host_ip': cfg.get('host_ip') or mw.getHostAddr(),
+        'role': state.get('role') if state.get('role') in ('master', 'standby') else _read_role(),
+        'online_status': 'online',
+        'health_status': _cloud_health_status(state),
+        'collect_status': 'success',
+        'collect_method': 'local',
+        'health_detail': {'summary': state.get('health_text') or '', 'checks': state.get('checks') or []},
+        'reported_at': _now(),
+    }
+
+
+def _cloud_register(cfg, state):
+    payload = _cloud_snapshot(cfg, state)
+    ok, error, data = _cloud_http(cfg, 'register', payload)
+    if ok:
+        cfg['cloud_registered'] = True
+        cfg['cloud_last_error'] = ''
+        _save_config(cfg)
+        return True, '', data
+    cfg['cloud_registered'] = False
+    cfg['cloud_last_error'] = error
+    _save_config(cfg)
+    return False, error, data
+
+
+def _cloud_report(cfg, force_register=False):
+    if not cfg.get('monitor_url') or not safeBool(cfg.get('monitor_enabled'), False):
+        return True, '云监控未启用', {}
+    if not cfg.get('pair_id'):
+        cfg['cloud_last_error'] = '主备关系ID未配置'
+        _save_config(cfg)
+        return False, cfg['cloud_last_error'], {}
+    state = _state(cfg)
+    if force_register or not cfg.get('cloud_registered'):
+        ok, error, data = _cloud_register(cfg, state)
+        if not ok:
+            return False, error, data
+        cfg = _config(False)
+    payload = _cloud_snapshot(cfg, state)
+    task = _cloud_task_summary(cfg, state)
+    report_state = _report_state_data()
+    if task:
+        task_logs = ((report_state.get('tasks') or {}).get(task.get('switch_task_id')) or {}).get('logs') or []
+        payload['switch_task'] = task
+        payload['logs'] = task_logs
+    ok, error, data = _cloud_http(cfg, 'report', payload)
+    if ok:
+        cfg['last_report_at'] = _now()
+        cfg['cloud_last_error'] = ''
+        cfg['cloud_report_queue'] = []
+        _save_config(cfg)
+        if task and task.get('switch_task_id'):
+            task_state = (report_state.get('tasks') or {}).get(task.get('switch_task_id')) or {}
+            task_state['logs'] = []
+            report_state.setdefault('tasks', {})[task.get('switch_task_id')] = task_state
+            _save_report_state(report_state)
+        return True, '', data
+    cfg['cloud_last_error'] = error
+    cfg['cloud_report_queue'] = (cfg.get('cloud_report_queue') or ['state'])[-20:]
+    _save_config(cfg)
+    return False, error, data
 
 
 def _ensure_mysql_running():
@@ -1112,6 +1336,7 @@ def set_role():
     _save_config(cfg)
     state = _state(cfg)
     _append_log(cfg['last_action'])
+    _queue_cloud_report('role_corrected')
     return _return(True, '主备状态已校正为' + ('主机' if role == 'master' else '备机'), state)
 
 
@@ -1142,10 +1367,18 @@ def run_step():
     if not _lock():
         return _return(False, '已有步骤正在执行，请稍后再试')
     cfg = _config()
+    cloud_task_id = _cloud_task_id_for_run(run_id)
     cfg['desired_role'] = target_role
     cfg['switch_status'] = 'running'
     cfg['last_action'] = '执行步骤: ' + step_key
+    if cfg.get('cloud_active_task_id') != cloud_task_id:
+        cfg['cloud_active_run_id'] = run_id
+        cfg['cloud_active_task_id'] = cloud_task_id
+        cfg['cloud_task_started_at'] = _now()
+    else:
+        cfg['cloud_active_run_id'] = run_id
     _save_config(cfg)
+    _queue_cloud_report('switch_started')
     try:
         CURRENT_STEP_RUN_ID = run_id
         step_meta = _step_meta(target_role, step_key)
@@ -1173,6 +1406,7 @@ def run_step():
         cfg['last_action'] = '步骤完成: ' + step_key
         _save_config(cfg)
         _append_log(cfg['last_action'])
+        _queue_cloud_report('switch_step_completed')
         return _return(True, '步骤执行完成', {'state': 'done', 'logs': done_logs, 'log': _read_step_log(run_id), 'run_id': run_id, 'log_path': _step_log_path(run_id), 'warning_msg': warning_msg, 'state_snapshot': _state(cfg)})
     except Exception as e:
         msg = str(e)
@@ -1197,6 +1431,7 @@ def run_step():
             cfg['last_action'] = '自检完成: ' + step_key
             _save_config(cfg)
             _append_log(cfg['last_action'])
+            _queue_cloud_report('switch_step_completed')
             return _return(True, '自检完成，异常不阻断流程', {'state': 'done', 'logs': done_logs, 'log': _read_step_log(run_id), 'run_id': run_id, 'log_path': _step_log_path(run_id), 'warning_msg': warning_msg, 'state_snapshot': _state(cfg)})
         _save_step_result(target_role, step_key, 'failed', run_id, msg)
         cfg = _config()
@@ -1204,6 +1439,7 @@ def run_step():
         cfg['last_action'] = '步骤失败: ' + step_key
         _save_config(cfg)
         _append_log(cfg['last_action'] + '，' + msg)
+        _queue_cloud_report('switch_failed')
         return _return(False, msg, {'state': 'failed', 'logs': fail_logs, 'log': _read_step_log(run_id), 'run_id': run_id, 'log_path': _step_log_path(run_id), 'repair': _repair_guidance(target_role, step_key, msg), 'state_snapshot': _state(cfg)})
     finally:
         CURRENT_STEP_RUN_ID = ''
@@ -1237,6 +1473,7 @@ def reset_step():
     if target_role in state and step_key in state[target_role]:
         del state[target_role][step_key]
         _write_json(STEP_STATE_PATH, state)
+    _queue_cloud_report('switch_recovered')
     return _return(True, '已重置步骤', {'step_key': step_key, 'target_role': target_role})
 
 
@@ -1244,6 +1481,7 @@ def close_external_service():
     try:
         logs = _openresty_standby()
         _append_log('关闭对外服务完成')
+        _queue_cloud_report('external_service_changed')
         return _return(True, '关闭对外服务完成', {'external_closed': _external_closed(), 'logs': logs.splitlines(), 'state_snapshot': _state(_config())})
     except Exception as e:
         return _return(False, str(e), {'repair': _repair_guidance('standby', 'close_external', str(e))})
@@ -1253,6 +1491,7 @@ def open_external_service():
     try:
         logs = _openresty_master()
         _append_log('打开对外服务完成')
+        _queue_cloud_report('external_service_changed')
         return _return(True, '打开对外服务完成', {'external_closed': _external_closed(), 'logs': logs.splitlines(), 'state_snapshot': _state(_config())})
     except Exception as e:
         return _return(False, str(e), {'repair': _repair_guidance('master', 'master_openresty', str(e))})
@@ -1261,15 +1500,28 @@ def open_external_service():
 def save_monitor():
     data = _args()
     cfg = _config()
+    changed = False
     for key in ('pair_id', 'pair_name', 'monitor_url', 'report_interval'):
         if key in data:
+            changed = changed or cfg.get(key) != (data.get(key) or '')
             cfg[key] = data.get(key) or ''
     if 'monitor_enabled' in data:
         cfg['monitor_enabled'] = safeBool(data.get('monitor_enabled'), False)
     if not cfg.get('monitor_url'):
         cfg['monitor_enabled'] = False
+    if changed:
+        cfg['cloud_registered'] = False
+    cfg['report_interval'] = max(5, min(3600, _safe_int(cfg.get('report_interval'), 30)))
     _save_config(cfg)
-    return _return(True, '已保存配置', cfg)
+    _queue_cloud_report('binding_changed')
+    return _return(True, '已保存配置', _public_config(_config(False)))
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return default
 
 
 def clear_monitor():
@@ -1277,8 +1529,10 @@ def clear_monitor():
     cfg['monitor_url'] = ''
     cfg['monitor_enabled'] = False
     cfg['last_report_at'] = ''
+    cfg['cloud_registered'] = False
+    cfg['cloud_last_error'] = ''
     _save_config(cfg)
-    return _return(True, '已清空云监控地址', cfg)
+    return _return(True, '已清空云监控地址', _public_config(cfg))
 
 
 def regenerate_host_id():
@@ -1286,17 +1540,50 @@ def regenerate_host_id():
     mw.writeFile(os.path.join(RUNTIME_DIR, 'host_id.pl'), new_host_id)
     cfg = _config(False)
     cfg['host_id'] = new_host_id
+    cfg['cloud_registered'] = False
     _save_config(cfg)
+    _queue_cloud_report('host_identity_changed')
     return _return(True, '本机ID已重新生成', {'host_id': new_host_id})
 
 
 def report_state():
     cfg = _config()
-    if not _monitor_enabled(cfg):
-        return _return(True, '云监控地址为空或未启用，跳过上报', cfg)
-    cfg['last_report_at'] = _now()
-    _save_config(cfg)
-    return _return(True, '本机状态已刷新', cfg)
+    if not cfg.get('monitor_url') or not safeBool(cfg.get('monitor_enabled'), False):
+        return _return(True, '云监控地址为空或未启用，跳过上报', _public_config(cfg))
+    if not cfg.get('pair_id'):
+        cfg['cloud_last_error'] = '主备关系ID未配置'
+        _save_config(cfg)
+        return _return(False, '主备关系ID未配置，请先填写已添加的主备关系 ID', _public_config(cfg))
+    ok, error, data = _cloud_report(cfg)
+    if not ok:
+        _append_log('云监控上报失败: ' + error)
+        return _return(False, error, _public_config(_config(False)))
+    return _return(True, '本机状态已上报', _public_config(_config(False)))
+
+
+def report_state_task():
+    """Scheduler entrypoint: report without making local switching depend on the cloud."""
+    cfg = _config()
+    if not cfg.get('monitor_url') or not safeBool(cfg.get('monitor_enabled'), False):
+        return _return(True, '云监控未启用，跳过定时上报')
+    if not cfg.get('pair_id'):
+        cfg['cloud_last_error'] = '主备关系ID未配置'
+        _save_config(cfg)
+        return _return(True, '主备关系ID未配置，跳过定时上报')
+    now = time.time()
+    report_data = _report_state_data()
+    last_attempt = float(report_data.get('last_attempt_at') or 0)
+    interval = max(5, min(3600, _safe_int(cfg.get('report_interval'), 30)))
+    pending = bool(cfg.get('cloud_report_queue'))
+    if not pending and now - last_attempt < interval:
+        return _return(True, '未到上报周期，跳过定时上报')
+    report_data['last_attempt_at'] = now
+    _save_report_state(report_data)
+    ok, error, data = _cloud_report(cfg)
+    if not ok:
+        _append_log('云监控定时上报失败: ' + error)
+        return _return(True, '云监控上报待重试')
+    return _return(True, '云监控定时上报成功')
 
 
 def read_log():
@@ -1340,6 +1627,8 @@ if __name__ == '__main__':
         print(regenerate_host_id())
     elif func == 'report_state':
         print(report_state())
+    elif func == 'report_state_task':
+        print(report_state_task())
     elif func == 'read_log':
         print(read_log())
     else:
