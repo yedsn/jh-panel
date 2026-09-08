@@ -1037,42 +1037,58 @@ def _cloud_health_status(state):
     return 'normal'
 
 
+def _cloud_flow_progress(cfg, task_id):
+    target_role = cfg.get('desired_role') if cfg.get('desired_role') in ('master', 'standby') else cfg.get('role')
+    flow_config = _read_json(os.path.join(PLUGIN_DIR, 'flow_config.json'), {})
+    steps = (((flow_config.get('roles') or {}).get(target_role) or {}).get('steps') or [])
+    saved_steps = (_step_state().get(target_role) or {})
+    summary = []
+    current_step = ''
+    next_step = ''
+    failed = False
+    completed = bool(steps)
+    for step in steps:
+        key = step.get('key') or ''
+        saved = saved_steps.get(key) or {}
+        run_id = saved.get('run_id') if isinstance(saved, dict) else ''
+        same_task = bool(run_id) and _cloud_task_id_for_run(run_id) == task_id
+        step_status = saved.get('state') if same_task else 'pending'
+        step_status = step_status if step_status in ('pending', 'running', 'done', 'failed') else 'pending'
+        summary.append({'step': key, 'status': step_status, 'updated_at': saved.get('updated_at') if same_task else ''})
+        if step_status == 'failed':
+            failed = True
+            if not current_step:
+                current_step = key
+        elif step_status == 'running' and not current_step:
+            current_step = key
+        if step_status != 'done':
+            completed = False
+            if not next_step:
+                next_step = step.get('title') or key
+    return summary, current_step, next_step, completed, failed
+
+
 def _cloud_task_summary(cfg, state):
     task_id = str(cfg.get('cloud_active_task_id') or '').strip()
     if not task_id:
         return None
-    run_id = str(cfg.get('cloud_active_run_id') or '').strip()
+    summary, current_step, next_step, completed, flow_failed = _cloud_flow_progress(cfg, task_id)
     task_state = str(cfg.get('switch_status') or 'idle')
-    if task_state == 'running':
-        status = 'running'
-    elif task_state == 'failed':
+    if task_state == 'failed' or flow_failed:
         status = 'failed'
+    elif not completed:
+        status = 'running'
     else:
         status = 'success'
-    step_state = _step_state()
-    summary = []
-    current_step = ''
-    next_step = ''
-    for role, steps in step_state.items():
-        if not isinstance(steps, dict):
-            continue
-        for key, item in steps.items():
-            if not isinstance(item, dict) or item.get('run_id') != run_id:
-                continue
-            summary.append({'step': key, 'status': item.get('state') or 'pending', 'updated_at': item.get('updated_at') or ''})
-            if item.get('state') in ('running', 'failed'):
-                current_step = key
     if not current_step:
-        current_step = cfg.get('last_action') or ''
-    if status == 'running':
-        next_step = '等待当前步骤完成'
+        current_step = ('等待执行: ' + next_step) if status == 'running' and next_step else (cfg.get('last_action') or '')
     return {
         'switch_task_id': task_id,
         'target_role': cfg.get('desired_role') if cfg.get('desired_role') in ('master', 'standby') else cfg.get('role'),
         'status': status,
         'status_text': cfg.get('last_action') or '',
         'current_step': current_step,
-        'next_step': next_step,
+        'next_step': ('下一步: ' + next_step) if status == 'running' and next_step else '',
         'step_summary': summary,
         'started_at': cfg.get('cloud_task_started_at') or '',
         'finished_at': _now() if status in ('success', 'failed') else ''
@@ -1402,7 +1418,8 @@ def run_step():
         _save_step_result(target_role, step_key, 'done', run_id, '', warning_msg)
         cfg = _config()
         cfg['desired_role'] = target_role
-        cfg['switch_status'] = 'idle'
+        _, _, _, flow_completed, _ = _cloud_flow_progress(cfg, cfg.get('cloud_active_task_id') or '')
+        cfg['switch_status'] = 'idle' if flow_completed else 'running'
         cfg['last_action'] = '步骤完成: ' + step_key
         _save_config(cfg)
         _append_log(cfg['last_action'])
@@ -1427,7 +1444,8 @@ def run_step():
             _save_step_result(target_role, step_key, 'done', run_id, '', warning_msg)
             cfg = _config()
             cfg['desired_role'] = target_role
-            cfg['switch_status'] = 'idle'
+            _, _, _, flow_completed, _ = _cloud_flow_progress(cfg, cfg.get('cloud_active_task_id') or '')
+            cfg['switch_status'] = 'idle' if flow_completed else 'running'
             cfg['last_action'] = '自检完成: ' + step_key
             _save_config(cfg)
             _append_log(cfg['last_action'])
