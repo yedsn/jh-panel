@@ -31,6 +31,7 @@ show_menu() {
     echo "6. 清理系统crontab"
     echo "7. 将使用自定义证书的站点改为letsencrypt证书"
     echo "8. 清理数据库_record_history表（分析生成清理SQL）"
+    echo "9. 按名称正则删除计划任务"
     echo "========================================================"
 }
 
@@ -68,5 +69,8 @@ case $choice in
     ;;
 8)
     download_and_run arrange__cleanup_record_history.sh
+    ;;
+9)
+    download_and_run arrange__delete_crontab_by_name_regex.sh
     ;;
 esac
