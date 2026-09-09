@@ -5,6 +5,7 @@ import os
 import re
 import signal
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -917,6 +918,18 @@ def _openresty_status_ports():
     return [], '未找到包含 /nginx_status 和 stub_status 的监听端口'
 
 
+def _openresty_proxy_protocol_ports():
+    content = _read_openresty_config_with_includes(OPENRESTY_CONF)
+    ports = set()
+    for listen in re.findall(r'\blisten\s+([^;]+);', str(content or ''), re.I):
+        options = listen.split()
+        if any(option.lower() == 'proxy_protocol' for option in options):
+            port = _nginx_listen_port(options[0] if options else '')
+            if port:
+                ports.add(port)
+    return ports
+
+
 def _parse_openresty_status(text, port=''):
     text = str(text or '')
     patterns = {
@@ -960,6 +973,31 @@ def _read_openresty_status(port):
         return response.read(65536).decode('utf-8', errors='replace')
 
 
+def _read_openresty_status_with_proxy_protocol(port):
+    request = (
+        'PROXY TCP4 127.0.0.1 127.0.0.1 12345 {0}\r\n'
+        'GET /nginx_status HTTP/1.1\r\n'
+        'Host: 127.0.0.1\r\n'
+        'Connection: close\r\n\r\n'
+    ).format(port).encode('ascii')
+    chunks = []
+    total = 0
+    with socket.create_connection(('127.0.0.1', int(port)), timeout=1) as connection:
+        connection.settimeout(1)
+        connection.sendall(request)
+        while total < 65536:
+            chunk = connection.recv(min(8192, 65536 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+    response = b''.join(chunks)
+    separator = response.find(b'\r\n\r\n')
+    if separator < 0:
+        raise ValueError('状态页响应不完整')
+    return response[separator + 4:].decode('utf-8', errors='replace')
+
+
 def _openresty_status_error(error):
     text = str(error or '').strip()
     if 'Remote end closed connection without response' in text:
@@ -981,11 +1019,17 @@ def _openresty_connection_snapshot():
             return _connection_snapshot_unavailable(discovery_error or listen_error or '未找到 OpenResty 状态页配置')
         discovery_error = (discovery_error or '未找到 OpenResty 状态页配置') + '；已改用 OpenResty 实际监听端口探测'
     errors = [discovery_error] if discovery_error else []
+    proxy_protocol_ports = _openresty_proxy_protocol_ports()
     for port in ports:
         try:
             return _parse_openresty_status(_read_openresty_status(port), port)
         except Exception as e:
             errors.append('端口 {0}: {1}'.format(port, _openresty_status_error(e)))
+            if port in proxy_protocol_ports:
+                try:
+                    return _parse_openresty_status(_read_openresty_status_with_proxy_protocol(port), port)
+                except Exception as proxy_error:
+                    errors.append('端口 {0}（PROXY protocol）: {1}'.format(port, _openresty_status_error(proxy_error)))
     return _connection_snapshot_unavailable('；'.join(errors) or 'OpenResty 状态页不可访问', ports[0])
 
 

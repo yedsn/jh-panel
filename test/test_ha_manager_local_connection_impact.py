@@ -130,6 +130,20 @@ Reading: 1 Writing: 2 Waiting: 9
         with open(config_path, 'w', encoding='utf-8') as fp:
             fp.write('''http {
   server {
+    listen 80 proxy_protocol;
+    location /nginx_status { stub_status on; }
+  }
+}
+''')
+        module._read_openresty_status = lambda port: (_ for _ in ()).throw(RuntimeError('Remote end closed connection without response'))
+        module._read_openresty_status_with_proxy_protocol = lambda port: status_text
+        proxy_protocol_snapshot = module._openresty_connection_snapshot()
+        assert proxy_protocol_snapshot['available'] is True
+        assert proxy_protocol_snapshot['port'] == '80'
+
+        with open(config_path, 'w', encoding='utf-8') as fp:
+            fp.write('''http {
+  server {
     listen 80;
     location /nginx_status { stub_status on; }
   }

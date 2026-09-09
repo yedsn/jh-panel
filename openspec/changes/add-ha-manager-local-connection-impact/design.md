@@ -59,6 +59,9 @@ OpenResty 默认配置提供仅本机访问的 `/nginx_status`，并启用了 `s
 10. **兼容被 include 的状态页配置。**
    状态页端口发现递归读取 OpenResty 主配置引用的 `include` 文件，兼容 `stub_status;` 与 `stub_status on;`。配置发现失败时读取实际由 OpenResty 监听的端口作为候选，并仍严格校验响应格式；普通 HTTP 服务不会被解析为连接指标。已定位状态页端口返回的底层网络异常转换为中文原因摘要，避免将 Python 英文错误直接暴露在页面上。
 
+11. **兼容启用 PROXY protocol 的监听端口。**
+   当状态页候选端口启用了 `proxy_protocol` 时，普通本机 HTTP 请求会被 OpenResty 主动关闭。插件在普通请求失败后，根据配置识别该端口并以 PROXY protocol v1 头重试本机状态页请求；响应仍须通过 `stub_status` 字段校验后才会显示连接统计。
+
 ## Risks / Trade-offs
 
 - [风险] `stub_status` 的请求本身会占用一个短暂连接，且连接状态瞬时变化。 → 将其描述为即时快照和粗略影响范围，不承诺精确用户数或零误差。

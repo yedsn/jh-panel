@@ -23,6 +23,10 @@
 - **WHEN** OpenResty 配置中未找到包含 `/nginx_status` 和 `stub_status` 的 server
 - **THEN** 插件可使用实际由 OpenResty 监听的端口进行严格探测；若仍无法获取状态页，则返回状态页未配置或不可访问的原因，且不得将普通 HTTP 响应解析为连接指标
 
+#### Scenario: 状态页端口启用了 PROXY protocol
+- **WHEN** 用于状态页探测的 OpenResty 监听端口启用了 `proxy_protocol`，普通 HTTP 请求被主动关闭
+- **THEN** 插件以本机 PROXY protocol v1 头重试 `/nginx_status`，并在响应符合 `stub_status` 格式时返回连接快照
+
 ### Requirement: 总览展示当前连接影响范围
 本地主备管理插件 SHALL 在总览页的对外服务信息中展示最新连接快照。界面 MUST 将 `active` 标识为“当前活动连接”，并展示 Reading、Writing、Waiting 和采集时间；界面 MUST 不将任何连接指标标识为真实用户人数。
 
