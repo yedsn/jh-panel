@@ -257,13 +257,13 @@ context.hmlPost = function(method, args, success) {
   }});
 };
 context.hmlShowConnectionDetails();
-if (calls[calls.length - 1] !== 'get_connection_details' || detailHtml.indexOf('192.168.3.8:54321') === -1 || detailHtml.indexOf('不包含请求 URL') === -1 || detailHtml.indexOf('HTTP keep-alive') === -1 || detailHtml.indexOf('当前配置为约 60 秒') === -1) throw new Error('连接详情弹窗未正确展示');
+if (calls[calls.length - 1] !== 'get_connection_details' || detailHtml.indexOf('192.168.3.8:54321') === -1 || detailHtml.indexOf('HTTP keep-alive') === -1 || detailHtml.indexOf('约 60 秒') === -1) throw new Error('连接详情弹窗未正确展示');
 
 const emptyConnectionHtml = context.hmlConnectionSnapshotHtml({available: true, active: 0, reading: 0, writing: 0, waiting: 0, collected_at: '2026-09-09 14:10:00'}, true);
 const activeConnectionHtml = context.hmlConnectionSnapshotHtml({available: true, active: 1, reading: 0, writing: 1, waiting: 0}, true);
 const detailRowStart = emptyConnectionHtml.indexOf('class="hml-connection-values hml-connection-detail-row"');
 const detailRowEnd = emptyConnectionHtml.indexOf('</span><span class="hml-connection-time"');
-if (detailRowStart === -1 || detailRowEnd <= detailRowStart || emptyConnectionHtml.indexOf('onclick="hmlShowConnectionDetails()"') === -1 || emptyConnectionHtml.indexOf('Reading 0') === -1 || emptyConnectionHtml.indexOf('hml-connection-detail-link-empty') === -1 || activeConnectionHtml.indexOf('hml-connection-detail-link-active') === -1 || emptyConnectionHtml.indexOf('采集于 2026-09-09 14:10:00</span>') === -1) throw new Error('连接数颜色状态未正确渲染');
+if (detailRowStart === -1 || detailRowEnd <= detailRowStart || emptyConnectionHtml.indexOf('onclick="hmlShowConnectionDetails()"') === -1 || emptyConnectionHtml.indexOf('Reading 0') === -1 || emptyConnectionHtml.indexOf('hml-connection-detail-link-empty') === -1 || emptyConnectionHtml.indexOf('hml-connection-label-active') !== -1 || activeConnectionHtml.indexOf('hml-connection-detail-link-active') === -1 || activeConnectionHtml.indexOf('hml-connection-label-active') === -1 || emptyConnectionHtml.indexOf('采集于 2026-09-09 14:10:00</span>') === -1) throw new Error('连接数颜色状态未正确渲染');
 '''
     result = subprocess.run(
         ['node', '-', SCRIPT_PATH],

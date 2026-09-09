@@ -419,9 +419,11 @@ function hmlConnectionSnapshotHtml(snapshot, compact) {
   if (!snapshot.available) {
     return '<span class="hml-connection-unavailable">当前连接数暂时无法获取' + (snapshot.reason ? '：' + hmlHtml(snapshot.reason) : '') + '</span>';
   }
-  var connectionClass = Number(snapshot.active || 0) > 0 ? 'hml-connection-detail-link-active' : 'hml-connection-detail-link-empty';
+  var hasActiveConnection = Number(snapshot.active || 0) > 0;
+  var connectionClass = hasActiveConnection ? 'hml-connection-detail-link-active' : 'hml-connection-detail-link-empty';
+  var labelClass = hasActiveConnection ? 'hml-connection-label-active' : '';
   var values = [
-    '<span class="hml-connection-label">当前外部活动连接 </span><span class="hml-connection-detail-link ' + connectionClass + '">' + hmlHtml(snapshot.active) + '</span>',
+    '<span class="hml-connection-label ' + labelClass + '">当前外部活动连接 </span><span class="hml-connection-detail-link ' + connectionClass + '">' + hmlHtml(snapshot.active) + '</span>',
     'Reading ' + hmlHtml(snapshot.reading),
     'Writing ' + hmlHtml(snapshot.writing),
     'Waiting ' + hmlHtml(snapshot.waiting)
