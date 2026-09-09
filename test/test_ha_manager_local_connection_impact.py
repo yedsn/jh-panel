@@ -24,6 +24,7 @@ def test_connection_snapshot_backend():
     runtime_dir = tempfile.mkdtemp(prefix='ha-manager-local-connection-test-')
     config_dir = tempfile.mkdtemp(prefix='ha-manager-local-openresty-conf-')
     config_path = os.path.join(config_dir, 'nginx.conf')
+    vhost_dir = os.path.join(config_dir, 'vhost')
     old_runtime_dir = os.environ.get('HA_MANAGER_LOCAL_RUNTIME_DIR')
     module_name = 'ha_manager_local_connection_impact_test'
     try:
@@ -45,6 +46,30 @@ def test_connection_snapshot_backend():
 ''')
         assert module._openresty_status_ports() == (['82'], '')
 
+        os.makedirs(vhost_dir)
+        included_status_path = os.path.join(vhost_dir, 'status.conf')
+        with open(config_path, 'w', encoding='utf-8') as fp:
+            fp.write('http { include vhost/*.conf; }\n')
+        with open(included_status_path, 'w', encoding='utf-8') as fp:
+            fp.write('''server {
+  listen 8181;
+  location /nginx_status { stub_status; }
+}
+''')
+        assert module._openresty_status_ports() == (['8181'], '')
+
+        with open(config_path, 'w', encoding='utf-8') as fp:
+            fp.write('''http {
+  keepalive_timeout 60;
+  server {
+    listen 82;
+    server_name 127.0.0.1;
+    location /nginx_status {
+      stub_status on;
+    }
+  }
+}
+''')
         status_text = '''Active connections: 12
 server accepts handled requests
  43 43 147
@@ -94,6 +119,10 @@ Reading: 1 Writing: 2 Waiting: 9
         assert no_status_page['available'] is False
         assert '未找到包含 /nginx_status 和 stub_status 的监听端口' in no_status_page['reason']
         assert '端口 80' in no_status_page['reason']
+
+        module._read_openresty_status = lambda port: (_ for _ in ()).throw(RuntimeError('Remote end closed connection without response'))
+        closed_connection = module._openresty_connection_snapshot()
+        assert '端口 80: 本机服务提前关闭了状态页连接' in closed_connection['reason']
 
         module._systemctl_active = lambda service: False
         stopped = module._openresty_connection_snapshot()

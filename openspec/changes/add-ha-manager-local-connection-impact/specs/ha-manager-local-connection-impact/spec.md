@@ -11,6 +11,10 @@
 - **WHEN** OpenResty 配置中的状态 server 使用非 80 监听端口
 - **THEN** 插件从实际配置定位该端口并成功获取对应连接快照
 
+#### Scenario: 状态页配置位于 include 文件
+- **WHEN** OpenResty 主配置通过 `include` 引用包含 `/nginx_status` 和 `stub_status` 的 server 配置
+- **THEN** 插件递归读取被引用配置，并使用实际监听端口采集连接快照
+
 #### Scenario: 状态页不可用或返回异常内容
 - **WHEN** OpenResty 未运行、状态页无法访问、端口无法定位或响应不符合 `stub_status` 格式
 - **THEN** 插件返回 `available=false` 和可展示的原因摘要，且不将普通 HTML 或异常文本解析为连接指标

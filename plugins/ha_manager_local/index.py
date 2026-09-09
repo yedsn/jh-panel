@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 import tempfile
+import glob
 
 if __name__ == '__main__' and len(sys.argv) > 1 and sys.argv[1] == 'status':
     print('start')
@@ -863,13 +864,31 @@ def _openresty_connection_details(limit=200):
     })
 
 
+def _read_openresty_config_with_includes(path, visited=None):
+    visited = visited if visited is not None else set()
+    path = os.path.abspath(path)
+    if path in visited or not os.path.isfile(path):
+        return ''
+    visited.add(path)
+    try:
+        content = mw.readFile(path)
+    except Exception:
+        return ''
+    result = [str(content or '')]
+    for include_path in re.findall(r'\binclude\s+([^;\s]+)\s*;', str(content or '')):
+        if not os.path.isabs(include_path):
+            include_path = os.path.join(os.path.dirname(path), include_path)
+        for matched_path in sorted(glob.glob(include_path)):
+            result.append(_read_openresty_config_with_includes(matched_path, visited))
+    return '\n'.join(result)
+
+
 def _openresty_status_ports():
     if not os.path.exists(OPENRESTY_CONF):
         return [], 'OpenResty 配置文件不存在'
-    try:
-        content = mw.readFile(OPENRESTY_CONF)
-    except Exception as e:
-        return [], '读取 OpenResty 配置失败: ' + str(e)[:160]
+    content = _read_openresty_config_with_includes(OPENRESTY_CONF)
+    if not content:
+        return [], '读取 OpenResty 配置失败'
     lines = []
     for line in str(content or '').splitlines():
         lines.append(line.split('#', 1)[0])
@@ -887,7 +906,7 @@ def _openresty_status_ports():
         depth += line.count('{') - line.count('}')
         if server_lines is not None and depth <= server_depth:
             block = '\n'.join(server_lines)
-            if re.search(r'location\s+(?:=\s*)?/nginx_status\b', block) and re.search(r'\bstub_status\s+on\s*;', block):
+            if re.search(r'location\s+(?:=\s*)?/nginx_status\b', block) and re.search(r'\bstub_status(?:\s+on)?\s*;', block):
                 for listen in re.findall(r'\blisten\s+([^;]+);', block, re.I):
                     port = _nginx_listen_port(listen)
                     if port and port not in ports:
@@ -941,6 +960,17 @@ def _read_openresty_status(port):
         return response.read(65536).decode('utf-8', errors='replace')
 
 
+def _openresty_status_error(error):
+    text = str(error or '').strip()
+    if 'Remote end closed connection without response' in text:
+        return '本机服务提前关闭了状态页连接'
+    if 'Connection refused' in text or '拒绝连接' in text:
+        return '端口未监听'
+    if 'timed out' in text or '超时' in text:
+        return '请求超时'
+    return text[:120] or '未知错误'
+
+
 def _openresty_connection_snapshot():
     if not _systemctl_active('openresty'):
         return _connection_snapshot_unavailable('OpenResty 未运行')
@@ -952,7 +982,7 @@ def _openresty_connection_snapshot():
         try:
             return _parse_openresty_status(_read_openresty_status(port), port)
         except Exception as e:
-            errors.append('端口 {0}: {1}'.format(port, str(e)[:120]))
+            errors.append('端口 {0}: {1}'.format(port, _openresty_status_error(e)))
     return _connection_snapshot_unavailable('；'.join(errors) or 'OpenResty 状态页不可访问', ports[0])
 
 
