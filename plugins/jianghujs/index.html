@@ -2,6 +2,7 @@
 	<div class="bt-w-main">
 		<div class="bt-w-menu">
 			<p onclick="pluginService('jianghujs', $('.plugin_version').attr('version'));">服务</p>
+			<p onclick="serviceConfigPanel();">服务配置</p>
 			<p class="bgw" onclick="projectPanel();">项目列表</p>
 			<!-- <p onclick="pluginLogs('jianghujs','','run_log');">日志</p> -->
 		</div>
@@ -13,8 +14,7 @@
 <script type="text/javascript">
 
 resetPluginWinWidth(1000);
-$.getScript( "/plugins/file?name=jianghujs&f=js/jianghujs.js", function(){
+$.getScript( "/plugins/file?name=jianghujs&f=js/jianghujs.js&v=2026090901", function(){
 	projectPanel();
 });
 </script>
-

@@ -5,11 +5,147 @@ var logLayer = null; // 日志弹框
 var deployLayer = null; // 部署弹框
 var editItem = null; // 编辑项
 var refreshTableTask = null;
+var jianghujsPreheatTaskName = 'JianghuJS管理器项目预备';
+var jianghujsLogCleanTaskName = 'JianghuJS管理器日志清理';
 
 
 function projectPanel() {
 	refreshTable();
 	startRefreshTableTask();
+}
+
+function serviceConfigPanel() {
+    clearRefreshTableTask();
+    var content = '\
+    <div class="safe container-fluid jianghujs-service-config" style="overflow:hidden;">\
+        <div class="card mb10" id="jianghujs-preheat-task">\
+            <div class="flex align-center mb10"><b>项目依赖预备</b><span class="ml10 c9">仅备用机启用；仅处理存在 package-lock.json 的项目，按登记顺序执行 npm ci。</span></div>\
+            <div class="flex align-center mb10 jianghujs-task-period">\
+                <input type="hidden" name="id" value="">\
+                <span>周期</span>\
+                <select class="bt-input-text ml10" name="period" style="width:100px;">\
+                    <option value="day">每天</option>\
+                    <option value="minute-n">N分钟</option>\
+                </select>\
+                <span class="ml10 task-day-time"><input class="bt-input-text" type="number" name="hour" min="0" max="23" value="2" style="width:58px;"> : <input class="bt-input-text" type="number" name="minute" min="0" max="59" value="0" style="width:58px;"></span>\
+                <span class="ml10 task-minute-n" style="display:none;">每 <input class="bt-input-text" type="number" name="minute-n" min="1" value="60" style="width:65px;"> 分钟</span>\
+            </div>\
+            <button class="btn btn-success btn-sm task-create" onclick="saveJianghujsServiceTask(\'preheat\')">创建</button>\
+            <button class="btn btn-success btn-sm task-update" style="display:none" onclick="saveJianghujsServiceTask(\'preheat\')">修改</button>\
+            <button class="btn btn-danger btn-sm task-delete" style="display:none" onclick="deleteJianghujsServiceTask(\'preheat\')">删除</button>\
+        </div>\
+        <div class="card" id="jianghujs-log-clean-task">\
+            <div class="flex align-center mb10"><b>项目日志清理</b><span class="ml10 c9">只清理项目中已开启“自动清理日志”的 logs 目录。</span></div>\
+            <div class="flex align-center mb10 jianghujs-task-period">\
+                <input type="hidden" name="id" value="">\
+                <span>周期</span>\
+                <select class="bt-input-text ml10" name="period" style="width:100px;">\
+                    <option value="day">每天</option>\
+                    <option value="minute-n">N分钟</option>\
+                </select>\
+                <span class="ml10 task-day-time"><input class="bt-input-text" type="number" name="hour" min="0" max="23" value="1" style="width:58px;"> : <input class="bt-input-text" type="number" name="minute" min="0" max="59" value="0" style="width:58px;"></span>\
+                <span class="ml10 task-minute-n" style="display:none;">每 <input class="bt-input-text" type="number" name="minute-n" min="1" value="60" style="width:65px;"> 分钟</span>\
+            </div>\
+            <div class="flex align-center mb10"><span>保留规则</span><span class="ml10"><input class="bt-input-text" type="number" name="saveAllDay" min="1" value="3" style="width:58px;"> 天内全部保留，其余只保留</span><span class="ml10"><input class="bt-input-text" type="number" name="saveOther" min="0" value="1" style="width:58px;"> 份，最长保留</span><span class="ml10"><input class="bt-input-text" type="number" name="saveMaxDay" min="1" value="30" style="width:58px;"> 天</span></div>\
+            <button class="btn btn-success btn-sm task-create" onclick="saveJianghujsServiceTask(\'log_clean\')">创建</button>\
+            <button class="btn btn-success btn-sm task-update" style="display:none" onclick="saveJianghujsServiceTask(\'log_clean\')">修改</button>\
+            <button class="btn btn-danger btn-sm task-delete" style="display:none" onclick="deleteJianghujsServiceTask(\'log_clean\')">删除</button>\
+            <button class="btn btn-default btn-sm task-migrate" style="display:none" onclick="migrateJianghujsLegacyLogCleanTasks()">迁移旧项目任务</button>\
+        </div>\
+    </div>';
+    $('.soft-man-con').html(content);
+    $('.jianghujs-task-period select[name="period"]').off('change.jianghujsTask').on('change.jianghujsTask', function() {
+        toggleJianghujsTaskPeriod($(this).closest('.card'));
+    });
+    loadJianghujsServiceTasks();
+}
+
+function toggleJianghujsTaskPeriod(card) {
+    var isMinuteN = card.find('select[name="period"]').val() === 'minute-n';
+    card.find('.task-day-time').toggle(!isMinuteN);
+    card.find('.task-minute-n').toggle(isMinuteN);
+}
+
+function fillJianghujsServiceTask(card, task, defaults, legacyTasks) {
+    task = task || null;
+    card.find('input[name="id"]').val(task ? task.id : '');
+    card.find('select[name="period"]').val(task && task.type === 'minute-n' ? 'minute-n' : 'day');
+    card.find('input[name="hour"]').val(task && task.where_hour !== '' ? task.where_hour : defaults.hour);
+    card.find('input[name="minute"]').val(task && task.where_minute !== '' ? task.where_minute : defaults.minute);
+    card.find('input[name="minute-n"]').val(task && task.where1 ? task.where1 : defaults.minuteN);
+    if (defaults.logClean) {
+        card.find('input[name="saveAllDay"]').val(task && task.saveAllDay !== '' ? task.saveAllDay : 3);
+        card.find('input[name="saveOther"]').val(task && task.saveOther !== '' ? task.saveOther : 1);
+        card.find('input[name="saveMaxDay"]').val(task && task.saveMaxDay !== '' ? task.saveMaxDay : 30);
+    }
+    card.find('.task-create').toggle(!task);
+    card.find('.task-update,.task-delete').toggle(!!task);
+    card.find('.task-migrate').toggle(!!task && defaults.logClean && (legacyTasks || []).length > 0);
+    toggleJianghujsTaskPeriod(card);
+}
+
+function loadJianghujsServiceTasks() {
+    requestApi('get_service_task_config', {showLoading: false}, function(data) {
+        var result = $.parseJSON(data.data);
+        if (!result.status) {
+            layer.msg(result.msg || '读取服务配置失败', {icon: 2});
+            return;
+        }
+        var tasks = result.data || {};
+        fillJianghujsServiceTask($('#jianghujs-preheat-task'), tasks.preheat, {hour: 2, minute: 0, minuteN: 60});
+        fillJianghujsServiceTask($('#jianghujs-log-clean-task'), tasks.log_clean, {hour: 1, minute: 0, minuteN: 60, logClean: true}, tasks.legacy_log_clean_tasks);
+    });
+}
+
+function buildJianghujsServiceTask(type) {
+    var isLogClean = type === 'log_clean';
+    var card = isLogClean ? $('#jianghujs-log-clean-task') : $('#jianghujs-preheat-task');
+    var period = card.find('select[name="period"]').val();
+    var minuteN = parseInt(card.find('input[name="minute-n"]').val(), 10) || 1;
+    var task = {id: card.find('input[name="id"]').val(), name: isLogClean ? jianghujsLogCleanTaskName : jianghujsPreheatTaskName, type: period, week: '', where1: period === 'minute-n' ? minuteN : '', hour: period === 'day' ? card.find('input[name="hour"]').val() : '', minute: period === 'day' ? card.find('input[name="minute"]').val() : '', sType: 'toShell', sName: '', backupTo: 'localhost', backup_to: 'localhost'};
+    if (isLogClean) {
+        task.saveAllDay = card.find('input[name="saveAllDay"]').val();
+        task.saveOther = card.find('input[name="saveOther"]').val();
+        task.saveMaxDay = card.find('input[name="saveMaxDay"]').val();
+        task.sBody = 'python3 /www/server/jh-panel/plugins/jianghujs/index.py project_log_clean_all \'{"saveAllDay":"' + task.saveAllDay + '","saveOther":"' + task.saveOther + '","saveMaxDay":"' + task.saveMaxDay + '"}\'';
+    } else {
+        task.sBody = "python3 /www/server/jh-panel/plugins/jianghujs/index.py project_preheat_all '{}'";
+    }
+    return task;
+}
+
+function saveJianghujsServiceTask(type) {
+    var task = buildJianghujsServiceTask(type);
+    var creating = !task.id;
+    addOrUpdateCron(task).then(function(result) {
+        layer.msg(result.msg, {icon: result.status ? 1 : 2});
+        if (!result.status) return;
+        if (creating && type === 'log_clean') {
+            migrateJianghujsLegacyLogCleanTasks();
+            return;
+        }
+        loadJianghujsServiceTasks();
+    });
+}
+
+function migrateJianghujsLegacyLogCleanTasks() {
+    requestApi('migrate_legacy_log_clean_tasks', {showLoading: false}, function(data) {
+        var migration = $.parseJSON(data.data);
+        layer.msg(migration.msg, {icon: migration.status ? 1 : 2});
+        loadJianghujsServiceTasks();
+    });
+}
+
+function deleteJianghujsServiceTask(type) {
+    var card = type === 'log_clean' ? $('#jianghujs-log-clean-task') : $('#jianghujs-preheat-task');
+    var id = card.find('input[name="id"]').val();
+    if (!id) return;
+    safeMessage('确认删除', '确定删除该计划任务吗？删除后不会修改项目的日志清理参与状态。', function() {
+        delCron({id: id}).then(function(result) {
+            layer.msg(result.msg, {icon: result.status ? 1 : 2});
+            if (result.status) loadJianghujsServiceTasks();
+        });
+    });
 }
 
 function refreshTable() {
@@ -265,41 +401,12 @@ function openCreateItem() {
                     </div>\
                 </div>\
             </div>\
-            <div id='logCleanConfig'>\
-                <div class='line'>\
-                    <span class='tname'>日志清理时间</span>\
-                    <div class='info-r c4'>\
-                        <span>每天</span>\
-                        <span>\
-                            <input type='hidden' id='cronId' name='cronId' value=''>\
-                            <input type='number' id='cronHour' name='hour' value='1' maxlength='2' max='23' min='0'>\
-                            <span class='name'>:</span>\
-                            <input type='number' id='cronMinute' name='minute' value='0' maxlength='2' max='59' min='0'>\
-                        </span>\
-                    </div>\
-                </div>\
-                <div class='line' style='height: 50px;'>\
-                    <span class='tname'>日志保留规则</span>\
-                    <div class='info-r c4'>\
-                        <div class='plan_hms pull-left mr20 bt-input-text'>\
-                            <span><input type='number' name='saveAllDay' id='saveAllDay' value='3' maxlength='4' max='100' min='1'></span>\
-                            <span class='name' style='width: 160px;'>天内全部保留，其余只保留</span>\
-                            <span><input type='number' name='saveOther' id='saveOther' value='1' maxlength='4' max='100' min='1'></span>\
-                            <span class='name' style='width: 90px;'>份，最长保留</span>\
-                            <span><input type='number' name='saveMaxDay' id='saveMaxDay' value='30' maxlength='4' max='100' min='1'></span>\
-                            <span class='name'>天</span>\
-                        </div>\
-                    </div>\
-                </div>\
-            </div>\
             <div class='bt-form-submit-btn'>\
                 <button type='button' class='btn btn-danger btn-sm btn-title' onclick='layer.close(addLayer)'>取消</button>\
                 <button type='button' class='btn btn-success btn-sm btn-title' onclick=\"submitCreateItem()\">提交</button>\
             </div>\
         </form>",
-        success: function() {
-            bindProjectLogCleanSwitch();
-        }
+        success: function() {}
     });
 }
 
@@ -316,15 +423,12 @@ async function submitCreateItem(){
     if(!rdata.status) {
         layer.msg(rdata.msg, { icon: rdata.status ? 1 : 2 });
     }
-    await configProjectCron();
     layer.close(addLayer);
     refreshTable();
 }
 
 async function openEditItem(id) {
     editItem = tableData.find(item => item.id == id) || {};
-
-    let cron = (await getCron({name: '[勿删]项目[' + editItem.name + ']日志清理'})).data;
 
     editLayer = layer.open({
         type: 1,
@@ -382,58 +486,19 @@ async function openEditItem(id) {
                     </div>\
                 </div>\
             </div>\
-            <div id='logCleanConfig'>\
-                <div class='line'>\
-                    <span class='tname'>日志清理时间</span>\
-                    <div class='info-r c4'>\
-                        <span>每天</span>\
-                        <span>\
-                            <input type='hidden' id='cronId' name='cronId' value=''>\
-                            <input type='number' id='cronHour' name='hour' value='' maxlength='2' max='23' min='0'>\
-                            <span class='name'>:</span>\
-                            <input type='number' id='cronMinute' name='minute' value='' maxlength='2' max='59' min='0'>\
-                        </span>\
-                    </div>\
-                </div>\
-                <div class='line' style='height: 50px;'>\
-                    <span class='tname'>日志保留规则</span>\
-                    <div class='info-r c4'>\
-                        <div class='plan_hms pull-left mr20 bt-input-text'>\
-                            <span><input type='number' name='saveAllDay' id='saveAllDay' value='' maxlength='4' max='100' min='1'></span>\
-                            <span class='name' style='width: 160px;'>天内全部保留，其余只保留</span>\
-                            <span><input type='number' name='saveOther' id='saveOther' value='' maxlength='4' max='100' min='1'></span>\
-                            <span class='name' style='width: 90px;'>份，最长保留</span>\
-                            <span><input type='number' name='saveMaxDay' id='saveMaxDay' value='' maxlength='4' max='100' min='1'></span>\
-                            <span class='name'>天</span>\
-                        </div>\
-                    </div>\
-                </div>\
-            </div>\
             <div class='bt-form-submit-btn'>\
                 <button type='button' class='btn btn-danger btn-sm btn-title' onclick='layer.close(editLayer)'>取消</button>\
                 <button type='button' class='btn btn-success btn-sm btn-title' onclick=\"submitEditItem()\">提交</button>\
             </div>\
         </form>",
-        success: function() {
-            bindProjectLogCleanSwitch();
-        }
+        success: function() {}
     });
     
     $('#projectStartScript').val(editItem.start_script);
     $('#projectReloadScript').val(editItem.reload_script);
     $('#projectStopScript').val(editItem.stop_script);
     $('#projectAutostartScript').val(editItem.autostart_script);
-    // 自动清理日志相关
-    $('#projectLogClean').prop('checked', cron != null);
-    if (!cron) {
-        $('#logCleanConfig').hide();
-    }
-    $('#cronId').val(cron ? cron.id : '');
-    $('#cronHour').val(cron ? cron.where_hour : '1');
-    $('#cronMinute').val(cron ? cron.where_minute : '0');
-    $('#saveAllDay').val(cron ? cron.saveAllDay : '3');
-    $('#saveOther').val(cron ? cron.saveOther : '1');
-    $('#saveMaxDay').val(cron ? cron.saveMaxDay : '30');
+    $('#projectLogClean').prop('checked', !!editItem.log_clean_enabled);
 }
 
 async function submitEditItem(){
@@ -442,7 +507,6 @@ async function submitEditItem(){
     let data = await requestApi('project_edit', form);
     let rdata = $.parseJSON(data.data);
     if(rdata.status) {
-        await configProjectCron();
         layer.close(editLayer);
         refreshTable();
     }
@@ -541,33 +605,6 @@ async function openDeployItem() {
                         </div>\
                     </div>\
                 </div>\
-                <div id='logCleanConfig'>\
-                    <div class='line'>\
-                        <span class='tname'>日志清理时间</span>\
-                        <div class='info-r c4'>\
-                            <span>每天</span>\
-                            <span>\
-                                <input type='hidden' id='cronId' name='cronId' value=''>\
-                                <input type='number' id='cronHour' name='hour' value='20' maxlength='2' max='23' min='0'>\
-                                <span class='name'>:</span>\
-                                <input type='number' id='cronMinute' name='minute' value='30' maxlength='2' max='59' min='0'>\
-                            </span>\
-                        </div>\
-                    </div>\
-                    <div class='line' style='height: 50px;'>\
-                        <span class='tname'></span>\
-                        <div class='info-r c4'>\
-                            <div class='plan_hms pull-left mr20 bt-input-text'>\
-                                <span><input type='number' name='saveAllDay' id='saveAllDay' value='3' maxlength='4' max='100' min='1'></span>\
-                                <span class='name' style='width: 160px;'>天内全部保留，其余只保留</span>\
-                                <span><input type='number' name='saveOther' id='saveOther' value='1' maxlength='4' max='100' min='1'></span>\
-                                <span class='name' style='width: 90px;'>份，最长保留</span>\
-                                <span><input type='number' name='saveMaxDay' id='saveMaxDay' value='30' maxlength='4' max='100' min='1'></span>\
-                                <span class='name'>天</span>\
-                            </div>\
-                        </div>\
-                    </div>\
-                </div>\
             </div>\
             <div class='bt-form-submit-btn'>\
                 <button type='button' class='btn btn-danger btn-sm btn-title' onclick='layer.close(deployLayer)'>取消</button>\
@@ -577,7 +614,6 @@ async function openDeployItem() {
             </div>\
         </form>",
         success: function() {
-            bindProjectLogCleanSwitch();
             $("#deployForm .step2, #deployForm .step2-btn, #deployForm .step2-back-btn").hide();
         }
     });
@@ -654,18 +690,6 @@ function projectDisableStartBatch() {
     projectStartExcute('disable', checkedIds.join(','))
 }
 
-// 绑定自动清理日志开关事件
-function bindProjectLogCleanSwitch() {
-    $('#projectLogClean').click(function() {
-        if($(this).prop('checked')) {
-            $('#logCleanConfig').show();
-        } else {
-            $('#logCleanConfig').hide();
-        }
-    });
-}
-
-
 function handleGitUrlChange() {
     let gitUrl = document.getElementById('projectGitUrl').value;
     const regex = /^(?:https?:\/\/|git@)(?:[^@\/]+@)?(?:www\.)?([^:\/\s]+)(?:\/|:)([^\/\s]+)\/([^\/\s]+?)(?:\.git)?$/;
@@ -691,7 +715,6 @@ async function submitDeployItem() {
     
     let rdata = $.parseJSON(data.data);
     if(rdata.status) {
-        await configProjectCron();
         layer.close(deployLayer);
         refreshTable();
         openTimoutLayer('部署完毕，需要打开项目配置目录吗？', () => {
@@ -876,34 +899,6 @@ function checkProjectNameExist(projectName) {
 
 
 /*** 计划任务相关 start ***/
-async function configProjectCron() {
-    let logClean = $('#projectLogClean').prop('checked');
-    if (logClean) {
-        let saveAllDay = $('#saveAllDay').val();
-        let saveOther = $('#saveOther').val();
-        let saveMaxDay = $('#saveMaxDay').val();
-        let logPath = $('#projectPath').val() + '/logs';
-        // 添加计划任务
-        await addOrUpdateCron({
-            id: $('#cronId').val(),
-            name: '[勿删]项目[' + $('#projectName').val() + ']日志清理',
-            sType: 'toShell',
-            type: 'day',
-            hour: $('#cronHour').val(),
-            minute: $('#cronMinute').val(),
-            saveAllDay,
-            saveOther,
-            saveMaxDay,
-            sBody: `python3 /www/server/jh-panel/scripts/clean.py ${logPath} '{"saveAllDay": "${saveAllDay}", "saveOther": "${saveOther}", "saveMaxDay": "${saveMaxDay}"}'`
-        });
-    } else {
-        let cronId = $('#cronId').val();
-        if (cronId) {
-            await delCron({ id: cronId });
-        }
-    }
-}
-
 // 添加或者更新计划任务
 function addOrUpdateCron(data) {
 	return new Promise((resolve, reject) => {

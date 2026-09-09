@@ -1,5 +1,5 @@
 {
-  "version": "202609030200",
+  "version": "202609090300",
   "roles": {
     "master": {
       "stages": [
@@ -582,6 +582,36 @@
               {
                 "desc": "停止可能冲突的 nginx",
                 "cmd": "systemctl stop nginx || true"
+              }
+            ]
+          }
+        },
+        {
+          "key": "close_jianghujs_preheat",
+          "title": "关闭 JianghuJS 项目预备任务",
+          "desc": "关闭 JianghuJS管理器项目预备，主机不执行全部项目 npm ci。",
+          "stage": "计划任务",
+          "phase": "master_online",
+          "guide_ref": "cron",
+          "log_done": "JianghuJS 项目预备任务已调整",
+          "code": "python3 /www/server/jh-panel/scripts/switch.py closeCrontab 'JianghuJS管理器项目预备'",
+          "group": "计划任务调整",
+          "repair": {
+            "title": "检查 JianghuJS 项目预备任务",
+            "action": "保存任务配置后重试",
+            "text": "任务调整失败时，请确认 JianghuJS 管理器的服务配置中已创建“JianghuJS管理器项目预备”。任务不存在时该步骤仅记录提示，不会阻断主备切换。",
+            "commands": [
+              {
+                "desc": "查看项目预备任务状态",
+                "cmd": "sqlite3 /www/server/panel/data/default.db \"select id,name,status from crontab where name='JianghuJS管理器项目预备';\""
+              },
+              {
+                "desc": "查看面板计划任务日志目录",
+                "cmd": "ls -lah /www/server/cron"
+              },
+              {
+                "desc": "查看面板错误日志",
+                "cmd": "tail -n 100 /www/server/jh-panel/logs/error.log"
               }
             ]
           }
@@ -1202,6 +1232,36 @@
               },
               {
                 "desc": "查看计划任务日志目录",
+                "cmd": "ls -lah /www/server/cron"
+              },
+              {
+                "desc": "查看面板错误日志",
+                "cmd": "tail -n 100 /www/server/jh-panel/logs/error.log"
+              }
+            ]
+          }
+        },
+        {
+          "key": "open_jianghujs_preheat",
+          "title": "开启 JianghuJS 项目预备任务",
+          "desc": "开启 JianghuJS管理器项目预备，备用机按计划为存在 package-lock.json 的登记项目执行 npm ci。",
+          "stage": "计划任务",
+          "phase": "standby_offline",
+          "guide_ref": "cron",
+          "log_done": "JianghuJS 项目预备任务已调整",
+          "code": "python3 /www/server/jh-panel/scripts/switch.py openCrontab 'JianghuJS管理器项目预备'",
+          "group": "计划任务调整",
+          "repair": {
+            "title": "检查 JianghuJS 项目预备任务",
+            "action": "保存任务配置后重试",
+            "text": "任务调整失败时，请确认 JianghuJS 管理器的服务配置中已创建“JianghuJS管理器项目预备”。任务不存在时该步骤仅记录提示，不会阻断主备切换。",
+            "commands": [
+              {
+                "desc": "查看项目预备任务状态",
+                "cmd": "sqlite3 /www/server/panel/data/default.db \"select id,name,status from crontab where name='JianghuJS管理器项目预备';\""
+              },
+              {
+                "desc": "查看面板计划任务日志目录",
                 "cmd": "ls -lah /www/server/cron"
               },
               {

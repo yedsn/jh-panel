@@ -6,11 +6,21 @@ import os
 import re
 import time
 import shutil
+import json
+import subprocess
 from urllib.parse import unquote, urlparse
 import dictdatabase as DDB
 
-sys.path.append(os.getcwd() + "/class/core")
+PANEL_DIR = '/www/server/jh-panel'
+sys.path.append(PANEL_DIR + "/class/core")
+sys.path.append(PANEL_DIR + "/class/plugin")
 import mw
+from value_tool import boundedInt, safeBool
+
+
+PROJECT_PREHEAT_TASK_NAME = 'JianghuJS管理器项目预备'
+PROJECT_LOG_CLEAN_TASK_NAME = 'JianghuJS管理器日志清理'
+LEGACY_LOG_CLEAN_TASK_RE = re.compile(r'^\[勿删\]项目\[(.+)\]日志清理$')
 
 
 app_debug = False
@@ -38,18 +48,26 @@ def getInitDFile():
 
 def getArgs():
     args = sys.argv[2:]
+    raw = ' '.join(args).strip()
+    if not raw:
+        return {}
+
+    try:
+        data = json.loads(unquote(raw))
+        if isinstance(data, str):
+            data = json.loads(data)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
     tmp = {}
-    args_len = len(args)
-
-    if args_len == 1:
-        t = args[0].strip('{').strip('}')
-        t = t.split(':')
-        tmp[t[0]] = t[1]
-    elif args_len > 1:
-        for i in range(len(args)):
-            t = args[i].split(':')
-            tmp[t[0]] = t[1]
-
+    for item in args:
+        item = item.strip().strip('{').strip('}')
+        if ':' not in item:
+            continue
+        key, value = item.split(':', 1)
+        tmp[key.strip()] = value.strip()
     return tmp
 
 
@@ -104,6 +122,189 @@ def deleteOne(table, id):
     with getDb(table).session() as (session, db):
         del db[id]
         session.write()
+
+
+def getProjectLogCleanEnabled(project):
+    return safeBool(project.get('log_clean_enabled'), False)
+
+
+def normalizeProjectLogCleanState(project):
+    if 'log_clean_enabled' in project:
+        project['log_clean_enabled'] = getProjectLogCleanEnabled(project)
+        return project
+    project_name = str(project.get('name') or '')
+    same_name_projects = [item for item in getAll('project') if str(item.get('name') or '') == project_name]
+    legacy_enabled = any(
+        task.get('project_name') == project_name and task.get('enabled')
+        for task in legacyLogCleanTasks()
+    ) if len(same_name_projects) == 1 else False
+    project['log_clean_enabled'] = legacy_enabled
+    saveOne('project', project.get('id'), {'log_clean_enabled': legacy_enabled})
+    return project
+
+
+def getLogCleanRules(args=None):
+    args = args or {}
+    return {
+        'saveAllDay': boundedInt(args.get('saveAllDay'), 3, 1, 3650),
+        'saveOther': boundedInt(args.get('saveOther'), 1, 0, 100000),
+        'saveMaxDay': boundedInt(args.get('saveMaxDay'), 30, 1, 3650)
+    }
+
+
+def getCronTask(name):
+    task = mw.M('crontab').where('name=?', (name,)).field(
+        'id,name,type,where1,where_hour,where_minute,status,saveAllDay,saveOther,saveMaxDay,stype,sbody').find()
+    return task or None
+
+
+def getServiceTaskConfig():
+    return mw.returnJson(True, 'ok', {
+        'preheat': getCronTask(PROJECT_PREHEAT_TASK_NAME),
+        'log_clean': getCronTask(PROJECT_LOG_CLEAN_TASK_NAME),
+        'legacy_log_clean_tasks': legacyLogCleanTasks()
+    })
+
+
+def legacyLogCleanTasks():
+    rows = mw.M('crontab').field('id,name,status').select() or []
+    result = []
+    for row in rows:
+        match = LEGACY_LOG_CLEAN_TASK_RE.match(str(row.get('name') or ''))
+        if match:
+            result.append({
+                'id': row.get('id'),
+                'name': row.get('name'),
+                'project_name': match.group(1),
+                'enabled': safeBool(row.get('status'), False)
+            })
+    return result
+
+
+def migrateLegacyLogCleanTasks():
+    if not getCronTask(PROJECT_LOG_CLEAN_TASK_NAME):
+        return mw.returnJson(False, '统一日志清理任务尚未创建，未迁移或删除旧任务')
+
+    import crontab_api
+    cronApi = crontab_api.crontab_api()
+    projectsByName = {}
+    for project in getAll('project'):
+        projectsByName.setdefault(str(project.get('name') or ''), []).append(project)
+    migrated = []
+    skipped = []
+    for task in legacyLogCleanTasks():
+        matches = projectsByName.get(task['project_name'], [])
+        if len(matches) == 0:
+            skipped.append(task['name'] + '：未找到同名项目')
+            continue
+        if len(matches) > 1:
+            skipped.append(task['name'] + '：存在多个同名项目，无法安全迁移')
+            continue
+        project = matches[0]
+        saveOne('project', project['id'], {'log_clean_enabled': task['enabled']})
+        result = cronApi.delete(task['id'])
+        if result and result[0]:
+            migrated.append(task['name'])
+        else:
+            skipped.append(task['name'] + '：迁移标记已保存，但删除旧任务失败')
+
+    message = '已迁移 {0} 个旧日志清理任务'.format(len(migrated))
+    if skipped:
+        message += '；保留 {0} 个待人工处理任务'.format(len(skipped))
+    return mw.returnJson(True, message, {'migrated': migrated, 'skipped': skipped})
+
+
+def _printTaskOutput(output, limit=12000):
+    output = str(output or '').strip()
+    if not output:
+        return
+    if len(output) > limit:
+        print(output[-limit:])
+        print('|- 输出过长，仅显示最后 {0} 个字符'.format(limit))
+        return
+    print(output)
+
+
+def projectPreheatAll():
+    projects = getAll('project')
+    if not projects:
+        return mw.returnJson(True, '没有已登记项目，无需预备', {'success': [], 'skipped': [], 'failed': []})
+
+    success = []
+    skipped = []
+    failed = []
+    for project in projects:
+        name = str(project.get('name') or project.get('id') or '未命名项目')
+        path = str(project.get('path') or '').strip()
+        package_lock = os.path.join(path, 'package-lock.json')
+        if not path or not os.path.isdir(path):
+            reason = '项目目录不存在'
+            skipped.append({'name': name, 'reason': reason})
+            print('|- 跳过项目 {0}：{1}'.format(name, reason))
+            continue
+        if not os.path.isfile(package_lock):
+            reason = '未找到 package-lock.json'
+            skipped.append({'name': name, 'reason': reason})
+            print('|- 跳过项目 {0}：{1}'.format(name, reason))
+            continue
+
+        print('|- 开始预备项目依赖: {0} ({1})'.format(name, path))
+        command = 'source /root/.bashrc >/dev/null 2>&1 || true; npm ci'
+        try:
+            result = subprocess.run(
+                ['bash', '-lc', command], cwd=path, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, timeout=3600
+            )
+            _printTaskOutput(result.stdout)
+            if result.returncode == 0:
+                success.append(name)
+                print('|- 项目 {0} 依赖预备完成'.format(name))
+            else:
+                failed.append({'name': name, 'reason': 'npm ci 退出码 {0}'.format(result.returncode)})
+                print('|- 项目 {0} 依赖预备失败，退出码 {1}'.format(name, result.returncode))
+        except subprocess.TimeoutExpired:
+            failed.append({'name': name, 'reason': 'npm ci 执行超过 60 分钟'})
+            print('|- 项目 {0} 依赖预备超时'.format(name))
+        except Exception as e:
+            failed.append({'name': name, 'reason': str(e)})
+            print('|- 项目 {0} 依赖预备异常: {1}'.format(name, e))
+
+    message = '项目依赖预备完成：成功 {0} 个，跳过 {1} 个，失败 {2} 个'.format(
+        len(success), len(skipped), len(failed))
+    return mw.returnJson(len(failed) == 0, message, {'success': success, 'skipped': skipped, 'failed': failed})
+
+
+def projectLogCleanAll():
+    args = getArgs()
+    rules = getLogCleanRules(args)
+    projects = [project for project in getAll('project') if getProjectLogCleanEnabled(project)]
+    if not projects:
+        return mw.returnJson(True, '没有开启日志清理的项目', {'success': [], 'skipped': [], 'failed': [], 'rules': rules})
+
+    import clean_tool
+    success = []
+    skipped = []
+    failed = []
+    for project in projects:
+        name = str(project.get('name') or project.get('id') or '未命名项目')
+        logs_path = os.path.join(str(project.get('path') or ''), 'logs')
+        if not os.path.isdir(logs_path):
+            reason = '日志目录不存在'
+            skipped.append({'name': name, 'reason': reason})
+            print('|- 跳过项目 {0}：{1}'.format(name, reason))
+            continue
+        try:
+            print('|- 开始清理项目日志: {0} ({1})'.format(name, logs_path))
+            clean_tool.cleanPath(logs_path, rules, '*')
+            success.append(name)
+            print('|- 项目 {0} 日志清理完成'.format(name))
+        except Exception as e:
+            failed.append({'name': name, 'reason': str(e)})
+            print('|- 项目 {0} 日志清理异常: {1}'.format(name, e))
+
+    message = '项目日志清理完成：成功 {0} 个，跳过 {1} 个，失败 {2} 个'.format(
+        len(success), len(skipped), len(failed))
+    return mw.returnJson(len(failed) == 0, message, {'success': success, 'skipped': skipped, 'failed': failed, 'rules': rules})
 
 
 def status():
@@ -246,6 +447,7 @@ def projectUpdate():
 
 def projectList():
     data = getAll('project')
+    data = [normalizeProjectLogCleanState(item) for item in data]
     echos = {item.get('echo', '') for item in data}
     paths = {item.get('path', '') for item in data}
 
@@ -409,6 +611,8 @@ def projectAdd():
     reloadScript = getScriptArg('reloadScript')
     stopScript = getScriptArg('stopScript')
     autostartScript = getScriptArg('autostartScript')
+    logCleanValue = args.get('logClean') if 'logClean' in args else args.get('log_clean_enabled')
+    logCleanEnabled = safeBool(logCleanValue, False)
 
     echo =  mw.md5(str(time.time()) + '_jianghujs')
     id = int(time.time())
@@ -419,6 +623,7 @@ def projectAdd():
         'reload_script': reloadScript,
         'stop_script': stopScript,
         'autostart_script': autostartScript,
+        'log_clean_enabled': logCleanEnabled,
         'create_time': int(time.time()),
         'echo': echo
     })
@@ -441,6 +646,8 @@ def projectEdit():
     reloadScript = getScriptArg('reloadScript')
     stopScript = getScriptArg('stopScript')
     autostartScript = getScriptArg('autostartScript')
+    logCleanValue = args.get('logClean') if 'logClean' in args else args.get('log_clean_enabled')
+    logCleanEnabled = safeBool(logCleanValue, False)
     project = getOne('project', id)
     if not project:
         return mw.returnJson(False, '项目不存在!')
@@ -451,7 +658,8 @@ def projectEdit():
         'start_script': startScript,
         'reload_script': reloadScript,
         'stop_script': stopScript,
-        'autostart_script': autostartScript
+        'autostart_script': autostartScript,
+        'log_clean_enabled': logCleanEnabled
     })
     statusFile = '%s/script/%s_status' % (getServerDir(), echo)
     makeScriptFile(echo + '_start.sh', 'echo "正在启动项目，请稍侯..."\ntouch %s\necho "启动中..." >> %s\n%s\nrm -f %s' % (statusFile, statusFile, startScript, statusFile))
@@ -706,6 +914,14 @@ if __name__ == "__main__":
         print(projectLogs())
     elif func == 'project_logs_clear':
         print(projectLogsClear())
+    elif func == 'get_service_task_config':
+        print(getServiceTaskConfig())
+    elif func == 'migrate_legacy_log_clean_tasks':
+        print(migrateLegacyLogCleanTasks())
+    elif func == 'project_preheat_all':
+        print(projectPreheatAll())
+    elif func == 'project_log_clean_all':
+        print(projectLogCleanAll())
     elif func == 'get_add_known_hosts_script':
         print(getAddKnownHostsScript())
     elif func == 'get_clone_script':

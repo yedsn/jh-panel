@@ -43,6 +43,7 @@ MYSQL_PY = os.path.join(PANEL_DIR, 'scripts/mysql.py')
 MYSQL_APT_INDEX = os.path.join(PANEL_DIR, 'plugins/mysql-apt/index.py')
 RSYNCD_INDEX = os.path.join(PANEL_DIR, 'plugins/rsyncd/index.py')
 OPENRESTY_INDEX = os.path.join(PANEL_DIR, 'plugins/openresty/index.py')
+JIANGHUJS_PREHEAT_TASK_NAME = 'JianghuJS管理器项目预备'
 OS_TOOL_DIR = os.path.join(PANEL_DIR, 'scripts/os_tool/vm/default')
 STANDBY_SYNC_PUBLIC_KEY = '/root/.ssh/standby_sync.pub'
 AUTHORIZED_KEYS = '/root/.ssh/authorized_keys'
@@ -546,6 +547,7 @@ def _step_script_body(step_key, target_role=''):
         'open_rsync_notify': 'python3 {0} openRsyncStatusNotify'.format(_quote(SWITCH_PY)),
         'open_ssl_notify': 'python3 {0} setNotifyValue {1}'.format(_quote(SWITCH_PY), _quote(json.dumps({'ssl_cert': 14}, ensure_ascii=False))),
         'master_openresty': '\n'.join(['systemctl unmask openresty || true', 'systemctl enable openresty || true', 'python3 {0} start'.format(_quote(OPENRESTY_INDEX)) if os.path.exists(OPENRESTY_INDEX) else 'systemctl start openresty']),
+        'close_jianghujs_preheat': 'python3 {0} closeCrontab {1}'.format(_quote(SWITCH_PY), _quote(JIANGHUJS_PREHEAT_TASK_NAME)),
         'role_master': 'echo master > {0}'.format(_quote(ROLE_PATH)),
         'master_check': _health_check_script('master'),
         'close_external': '\n'.join(['python3 {0} stop'.format(_quote(OPENRESTY_INDEX)) if os.path.exists(OPENRESTY_INDEX) else 'systemctl stop openresty', 'systemctl stop openresty || true', 'systemctl disable openresty || true', 'systemctl mask openresty || true']),
@@ -562,6 +564,7 @@ def _step_script_body(step_key, target_role=''):
         'open_xtrabackup': 'python3 {0} openCrontab {1}'.format(_quote(SWITCH_PY), _quote('[勿删]xtrabackup-cron')),
         'open_xtrabackup_full': 'python3 {0} openCrontab {1}'.format(_quote(SWITCH_PY), _quote('[勿删]xtrabackup-inc全量备份')),
         'open_xtrabackup_inc': 'python3 {0} openCrontab {1}'.format(_quote(SWITCH_PY), _quote('[勿删]xtrabackup-inc增量备份')),
+        'open_jianghujs_preheat': 'python3 {0} openCrontab {1}'.format(_quote(SWITCH_PY), _quote(JIANGHUJS_PREHEAT_TASK_NAME)),
         'close_site_backup': 'python3 {0} closeCrontab {1}'.format(_quote(SWITCH_PY), _quote('备份网站配置[backupAll]')),
         'close_plugin_backup_all': 'python3 {0} closeCrontab {1}'.format(_quote(SWITCH_PY), _quote('备份插件配置[所有]')),
         'close_plugin_backup_batch': 'python3 {0} closeCrontab {1}'.format(_quote(SWITCH_PY), _quote('备份插件配置[backupAll]')),
@@ -841,6 +844,7 @@ HA_CHECK_DEFS = [
     {'group': '计划任务', 'name': '证书续签任务', 'type': 'crontab', 'target': "[勿删]续签Let's Encrypt证书", 'master': 'enabled', 'standby': 'disabled'},
     {'group': '计划任务', 'name': '恢复网站配置', 'type': 'crontab', 'target': '恢复网站配置[所有]', 'master': 'disabled', 'standby': 'enabled'},
     {'group': '计划任务', 'name': '恢复插件配置', 'type': 'crontab', 'target': '恢复插件配置[所有]', 'master': 'disabled', 'standby': 'enabled'},
+    {'group': '计划任务', 'name': JIANGHUJS_PREHEAT_TASK_NAME, 'type': 'crontab', 'target': JIANGHUJS_PREHEAT_TASK_NAME, 'master': 'disabled', 'standby': 'enabled'},
     {'group': 'SSH 同步', 'name': 'authorized_keys 同步公钥', 'type': 'authorized_key', 'master': 'unauthorized', 'standby': 'authorized'},
     {'group': 'rsync', 'name': 'rsyncd 任务', 'type': 'rsyncd_tasks', 'master': 'enabled', 'standby': 'disabled'},
     {'group': 'rsync', 'name': 'lsyncd 服务', 'type': 'lsyncd_service', 'master': 'running', 'standby': 'stopped'},
@@ -1226,6 +1230,7 @@ STEP_ACTIONS = {
     'open_rsync_notify': lambda: _set_notify_func('openRsyncStatusNotify', '开启 Rsync 状态异常提醒'),
     'open_ssl_notify': lambda: _set_ssl_notify(14),
     'master_openresty': lambda: _openresty_master(),
+    'close_jianghujs_preheat': lambda: _set_cron(JIANGHUJS_PREHEAT_TASK_NAME, False),
     'role_master': lambda: '|- ' + _write_role('master').get('role', 'master'),
     'master_check': lambda: _assert_health('master'),
     'close_external': lambda: _openresty_standby(),
@@ -1242,6 +1247,7 @@ STEP_ACTIONS = {
     'open_xtrabackup': lambda: _set_cron('[勿删]xtrabackup-cron', True),
     'open_xtrabackup_full': lambda: _set_cron('[勿删]xtrabackup-inc全量备份', True),
     'open_xtrabackup_inc': lambda: _set_cron('[勿删]xtrabackup-inc增量备份', True),
+    'open_jianghujs_preheat': lambda: _set_cron(JIANGHUJS_PREHEAT_TASK_NAME, True),
     'close_site_backup': lambda: _set_cron('备份网站配置[backupAll]', False),
     'close_plugin_backup_all': lambda: _set_cron('备份插件配置[所有]', False),
     'close_plugin_backup_batch': lambda: _set_cron('备份插件配置[backupAll]', False),
