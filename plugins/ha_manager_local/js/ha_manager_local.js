@@ -1,10 +1,13 @@
 var hmlState = {
   view: 'overview',
+  overview_loading: true,
   role: 'standby',
   desired_role: 'standby',
   switch_status: 'idle',
   external_closed: false,
-  connection_snapshot: {available: false, reason: '当前连接数暂时无法获取'},
+  health_loading: true,
+  health_error: '',
+  connection_snapshot: {loading: true},
   target_role: 'master',
   host_id: '',
   host_name: '',
@@ -79,9 +82,16 @@ function hmlMonitorEnabled() {
 }
 
 function hmlBoot() {
+  hmlRender();
   hmlLoadState(function() {
     hmlEnsureFlowConfig(function() {
+      hmlState.overview_loading = false;
+      hmlState.checks = [];
+      hmlState.health_loading = true;
+      hmlState.health_error = '';
       hmlRender();
+      hmlLoadConnectionSnapshot(false);
+      hmlLoadHealthCheck();
     });
   });
 }
@@ -416,6 +426,9 @@ function hmlExternalServiceButtonClass() {
 
 function hmlConnectionSnapshotHtml(snapshot, compact) {
   snapshot = snapshot || {};
+  if (snapshot.loading) {
+    return '<span class="hml-connection-loading">正在采集当前连接数...</span>';
+  }
   if (!snapshot.available) {
     return '<span class="hml-connection-unavailable">当前连接数暂时无法获取' + (snapshot.reason ? '：' + hmlHtml(snapshot.reason) : '') + '</span>';
   }
@@ -495,19 +508,40 @@ function hmlConnectionSnapshotResultText(snapshot) {
   return '关闭前活动连接 ' + snapshot.active + '（Reading ' + snapshot.reading + '，Writing ' + snapshot.writing + '，Waiting ' + snapshot.waiting + '）';
 }
 
-function hmlRefreshConnectionSnapshot() {
+function hmlLoadConnectionSnapshot(showError) {
   if (hmlConnectionRefreshBusy) return;
   hmlConnectionRefreshBusy = true;
-  var button = $('#hmlConnectionRefreshBtn');
-  button.prop('disabled', true).text('采集中');
+  hmlState.connection_snapshot = {loading: true};
+  if (hmlState.view === 'overview') hmlRenderOverview();
   hmlPost('get_connection_snapshot', {}, function(data) {
     hmlConnectionRefreshBusy = false;
     hmlState.connection_snapshot = data.connection_snapshot || {available: false, reason: '当前连接数暂时无法获取'};
     if (hmlState.view === 'overview') hmlRenderOverview();
   }, function(error) {
     hmlConnectionRefreshBusy = false;
-    button.prop('disabled', false).text('刷新');
-    layer.msg((error && error.msg) || '连接数采集失败', {icon: 2});
+    hmlState.connection_snapshot = {available: false, reason: (error && error.msg) || '连接数采集失败'};
+    if (hmlState.view === 'overview') hmlRenderOverview();
+    if (showError) layer.msg(hmlState.connection_snapshot.reason, {icon: 2});
+  });
+}
+
+function hmlRefreshConnectionSnapshot() {
+  hmlLoadConnectionSnapshot(true);
+}
+
+function hmlLoadHealthCheck() {
+  hmlPost('health_check', {}, function(data) {
+    hmlState.checks = data.checks || [];
+    hmlState.health_status = data.health_status || '';
+    hmlState.health_text = data.health_text || '';
+    hmlState.external_closed = data.external_closed;
+    hmlState.health_loading = false;
+    hmlState.health_error = '';
+    if (hmlState.view === 'overview') hmlRenderOverview();
+  }, function(error) {
+    hmlState.health_loading = false;
+    hmlState.health_error = (error && error.msg) || '自检暂时无法完成';
+    if (hmlState.view === 'overview') hmlRenderOverview();
   });
 }
 
@@ -537,8 +571,23 @@ function hmlOpenRoleCorrectDialog() {
 }
 
 function hmlRenderOverview() {
-  var failChecks = hmlState.checks.filter(function(item) { return item.status === 'fail'; }).length;
-  var warnChecks = hmlState.checks.filter(function(item) { return item.status === 'warning'; }).length;
+  if (hmlState.overview_loading) {
+    var skeleton = '<span class="hml-skeleton hml-skeleton-pill"></span>';
+    var skeletonLine = '<span class="hml-skeleton hml-skeleton-line"></span>';
+    var skeletonActions = '<span class="hml-skeleton hml-skeleton-button"></span><span class="hml-skeleton hml-skeleton-button"></span><span class="hml-skeleton hml-skeleton-button"></span><span class="hml-skeleton hml-skeleton-button"></span>';
+    var loadingHtml = '<div class="hml-topbar"><div><div class="hml-skeleton hml-skeleton-title"></div><div class="hml-skeleton hml-skeleton-sub"></div></div><div class="hml-actions hml-skeleton-actions">' + skeletonActions + '</div></div>' +
+      '<div class="hml-panel hml-overview-skeleton"><div class="hml-panel-body"><table class="table hml-overview-table"><tbody>' +
+        '<tr><th><span class="hml-skeleton hml-skeleton-label"></span></th><td>' + skeleton + skeletonLine + '</td></tr>' +
+        '<tr><th><span class="hml-skeleton hml-skeleton-label"></span></th><td>' + skeleton + skeletonLine + '<div class="hml-connection-summary"><span class="hml-skeleton hml-skeleton-connection"></span></div></td></tr>' +
+        '<tr><th><span class="hml-skeleton hml-skeleton-label"></span></th><td>' + skeleton + skeletonLine + '</td></tr>' +
+        '<tr><th><span class="hml-skeleton hml-skeleton-label"></span></th><td>' + skeleton + skeletonLine + '</td></tr>' +
+      '</tbody></table></div></div>';
+    $('.soft-man-con').html(loadingHtml);
+    return;
+  }
+  var checks = hmlState.checks || [];
+  var failChecks = checks.filter(function(item) { return item.status === 'fail'; }).length;
+  var warnChecks = checks.filter(function(item) { return item.status === 'warning'; }).length;
   var externalNormal = hmlExternalServiceNormal(hmlState.external_closed);
   var monitorConfigured = !!hmlState.monitor_url;
   var monitorEnabled = hmlMonitorEnabled();
@@ -550,12 +599,13 @@ function hmlRenderOverview() {
   var demoteBtn = '<button class="btn ' + (demoteDisabled ? 'btn-default' : 'btn-success') + ' btn-sm" onclick="hmlOpenSwitchDialog(\'standby\')" title="' + demoteTitle + '"' + (demoteDisabled ? ' disabled' : '') + '>主-&gt;备</button>';
   var roleCorrection = '<a href="javascript:;" class="hml-role-correct" onclick="hmlOpenRoleCorrectDialog()">校正</a>';
   var connectionSnapshot = hmlConnectionSnapshotHtml(hmlState.connection_snapshot, true);
+  var healthSummary = hmlState.health_loading ? '<span class="hml-overview-loading">正在自检...</span>' : (hmlState.health_error ? '<span class="hml-overview-loading">自检暂时无法完成：' + hmlHtml(hmlState.health_error) + '</span>' : hmlPill(failChecks ? 'bad' : (warnChecks ? 'warn' : 'ok'), failChecks ? '有异常' : (warnChecks ? '有提醒' : '正常')) + '<span class="hml-overview-note">异常项 ' + failChecks + ' 个，提醒项 ' + warnChecks + ' 个</span>');
   var html = '<div class="hml-topbar"><div><div class="hml-title">主备管理</div><div class="hml-sub">查看本机主备状态，必要时执行升主、降从与对外服务控制。</div></div><div class="hml-actions">' + promoteBtn + demoteBtn + '<button class="btn ' + hmlExternalServiceButtonClass() + ' btn-sm" onclick="hmlToggleExternalService()">' + hmlHtml(hmlExternalServiceButtonText()) + '</button><button class="btn btn-default btn-sm" onclick="hmlRunHealthCheck()">重新自检</button></div></div>' +
     '<div class="hml-panel"><div class="hml-panel-body">' +
       '<table class="table table-hover hml-overview-table"><tbody>' +
         '<tr><th>当前主备状态</th><td>' + hmlPill(hmlState.role === 'master' ? 'ok' : 'info', hmlRoleShortText(hmlState.role)) + roleCorrection + '</td></tr>' +
-        '<tr><th>对外服务</th><td>' + hmlPill(externalNormal ? 'ok' : 'bad', hmlState.external_closed ? '已关闭' : '开放中') + '<span class="hml-overview-note">' + hmlHtml(hmlState.external_closed ? 'OpenResty 已停止' : 'OpenResty 运行中') + '</span><div class="hml-connection-summary">' + connectionSnapshot + '<button type="button" id="hmlConnectionRefreshBtn" class="btn btn-default btn-xs hml-connection-refresh" onclick="hmlRefreshConnectionSnapshot()" title="重新采集当前连接数">刷新</button></div></td></tr>' +
-        '<tr><th>自检状态</th><td>' + hmlPill(failChecks ? 'bad' : (warnChecks ? 'warn' : 'ok'), failChecks ? '有异常' : (warnChecks ? '有提醒' : '正常')) + '<span class="hml-overview-note">异常项 ' + failChecks + ' 个，提醒项 ' + warnChecks + ' 个</span></td></tr>' +
+        '<tr><th>对外服务</th><td>' + hmlPill(externalNormal ? 'ok' : 'bad', hmlState.external_closed ? '已关闭' : '开放中') + '<span class="hml-overview-note">' + hmlHtml(hmlState.external_closed ? 'OpenResty 已停止' : 'OpenResty 运行中') + '</span><div class="hml-connection-summary">' + connectionSnapshot + '<button type="button" id="hmlConnectionRefreshBtn" class="btn btn-default btn-xs hml-connection-refresh" onclick="hmlRefreshConnectionSnapshot()" title="重新采集当前连接数"' + (hmlConnectionRefreshBusy ? ' disabled' : '') + '>' + (hmlConnectionRefreshBusy ? '采集中' : '刷新') + '</button></div></td></tr>' +
+        '<tr><th>自检状态</th><td>' + healthSummary + '</td></tr>' +
         '<tr><th>云监控</th><td>' + (monitorConfigured ? hmlPill(monitorEnabled ? 'ok' : 'warn', monitorEnabled ? '已启用' : '未启用') : hmlPill('warn', '未配置')) + '<span class="hml-overview-note">' + hmlHtml(monitorEnabled ? '最近上报：' + (hmlState.last_report_at || '未上报') : (monitorConfigured ? '已配置地址，但云监控相关功能已关闭' : '未启用云监控相关功能')) + '</span></td></tr>' +
       '</tbody></table>' +
     '</div></div>';
@@ -1459,10 +1509,12 @@ function hmlToggleExternalService() {
   if (hmlState.external_closed) {
     hmlPost('open_external_service', {}, function(data) {
       if (data.state_snapshot) hmlState = $.extend(true, hmlState, data.state_snapshot);
+      hmlState.connection_snapshot = {loading: true};
       hmlRefreshBrowserTitle();
       hmlLog('打开对外服务完成：OpenResty 已启动');
       layer.msg('已打开 OpenResty', {icon: 1});
       hmlRender();
+      hmlLoadConnectionSnapshot(false);
     });
   } else {
     hmlPost('get_connection_snapshot', {}, function(data) {
@@ -1470,6 +1522,7 @@ function hmlToggleExternalService() {
       hmlSafeMessageConfirm('确认关闭对外服务', hmlCloseExternalServiceMessage(preview), function() {
         hmlPost('close_external_service', {}, function(result) {
           if (result.state_snapshot) hmlState = $.extend(true, hmlState, result.state_snapshot);
+          hmlState.connection_snapshot = result.connection_snapshot || {available: false, reason: 'OpenResty 未运行'};
           hmlRefreshBrowserTitle();
           var snapshotText = hmlConnectionSnapshotResultText(result.connection_snapshot);
           hmlLog('关闭对外服务完成：OpenResty 已停止；' + snapshotText);
@@ -1486,6 +1539,7 @@ function hmlToggleExternalService() {
       hmlSafeMessageConfirm('确认关闭对外服务', hmlCloseExternalServiceMessage(unavailable), function() {
         hmlPost('close_external_service', {}, function(result) {
           if (result.state_snapshot) hmlState = $.extend(true, hmlState, result.state_snapshot);
+          hmlState.connection_snapshot = result.connection_snapshot || unavailable;
           hmlRefreshBrowserTitle();
           var snapshotText = hmlConnectionSnapshotResultText(result.connection_snapshot || unavailable);
           hmlLog('关闭对外服务完成：OpenResty 已停止；' + snapshotText);
@@ -1543,6 +1597,8 @@ function hmlRunHealthCheck(fix) {
     hmlState.health_status = data.health_status || hmlState.health_status;
     hmlState.health_text = data.health_text || hmlState.health_text;
     hmlState.external_closed = data.external_closed;
+    hmlState.health_loading = false;
+    hmlState.health_error = '';
     hmlLog('重新自检完成，发现 ' + hmlState.checks.filter(function(item) { return item.status === 'fail'; }).length + ' 个异常项，' + hmlState.checks.filter(function(item) { return item.status === 'warning'; }).length + ' 个提醒项');
     layer.msg('自检已刷新', {icon: 1});
     hmlSetView('health');

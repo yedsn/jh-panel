@@ -107,8 +107,11 @@ Reading: 1 Writing: 2 Waiting: 9
         module._read_logs = lambda: []
         stopped_state = module._state(module._default_config())
         assert stopped_state['external_closed'] is True
-        assert stopped_state['connection_snapshot']['available'] is False
-        assert stopped_state['connection_snapshot']['reason'] == 'OpenResty 未运行'
+        assert 'connection_snapshot' not in stopped_state
+        assert stopped_state['checks'] == []
+        initial_state = module._state(module._default_config(), include_health=False)
+        assert 'checks' not in initial_state
+        assert 'health_status' not in initial_state
 
         module._return = lambda status, msg, data=None: {'status': bool(status), 'msg': msg, 'data': data or {}}
         module._systemctl_active = lambda service: service == 'openresty'
@@ -175,16 +178,60 @@ const vm = require('vm');
 const source = fs.readFileSync(process.argv[2], 'utf8');
 const jquery = function() { return {}; };
 jquery.extend = function(deep, target, source) { return Object.assign(target, source || {}); };
-const context = {console: console, window: {}, $: jquery};
+let renderedHtml = '';
+const context = {console: console, window: {}, $: function() {
+  return {
+    html: function(value) { if (value !== undefined) renderedHtml = value; return this; },
+    removeClass: function() { return this; },
+    addClass: function() { return this; }
+  };
+}};
+context.$.extend = jquery.extend;
 vm.createContext(context);
 vm.runInContext(source, context);
+const realRenderOverview = context.hmlRenderOverview;
 
 function setCommonStubs() {
   context.hmlLog = function() {};
   context.hmlRender = function() {};
+  context.hmlRenderOverview = function() {};
   context.hmlRefreshBrowserTitle = function() {};
   context.layer = {msg: function() {}};
   context.hmlState.external_closed = false;
+}
+
+setCommonStubs();
+{
+  let completeStateLoad = null;
+  context.hmlState.overview_loading = true;
+  context.hmlRenderOverview = realRenderOverview;
+  context.hmlRender = function() { context.hmlRenderOverview(); };
+  context.hmlPost = function(method, args, success) {
+    if (method === 'get_state') completeStateLoad = success;
+  };
+  context.hmlBoot();
+  if (!completeStateLoad || renderedHtml.indexOf('hml-overview-skeleton') === -1 || renderedHtml.indexOf('hml-skeleton-button') === -1 || renderedHtml.indexOf('hml-skeleton-connection') === -1) throw new Error('基础状态加载期间未展示总览骨架屏');
+}
+
+setCommonStubs();
+{
+  let bootCalls = [];
+  let renderCount = 0;
+  let completeConnectionLoad = null;
+  let completeHealthLoad = null;
+  context.hmlEnsureFlowConfig = function(callback) { bootCalls.push('flow_config'); callback(); };
+  context.hmlRender = function() { renderCount += 1; };
+  context.hmlPost = function(method, args, success) {
+    bootCalls.push(method);
+    if (method === 'get_state') success({role: 'master', external_closed: false, checks: []});
+    if (method === 'get_connection_snapshot') completeConnectionLoad = success;
+    if (method === 'health_check') completeHealthLoad = success;
+  };
+  context.hmlBoot();
+  if (bootCalls.join(',') !== 'get_state,flow_config,get_connection_snapshot,health_check' || renderCount !== 2 || context.hmlState.overview_loading || !context.hmlState.connection_snapshot.loading || !context.hmlState.health_loading || !completeConnectionLoad || !completeHealthLoad) throw new Error('总览基础数据未同步加载完成');
+  completeConnectionLoad({connection_snapshot: {available: true, active: 2, reading: 0, writing: 1, waiting: 1}});
+  completeHealthLoad({checks: [{status: 'fail'}], health_status: 'warning', health_text: '自检异常 1 项', external_closed: false});
+  if (context.hmlState.connection_snapshot.active !== 2 || context.hmlConnectionRefreshBusy || context.hmlState.health_loading || context.hmlState.checks.length !== 1) throw new Error('异步状态未回填总览');
 }
 
 setCommonStubs();

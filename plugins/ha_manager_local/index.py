@@ -1261,29 +1261,32 @@ def _valid_step(target_role, step_key):
     return bool(_step_meta(target_role, step_key).get('key'))
 
 
-def _state(cfg=None):
+def _state(cfg=None, include_health=True):
     cfg = cfg or _config()
     role = cfg.get('role') or _read_role()
-    checks = _health_checks(role)
-    health_status, health_text = _health_summary(checks)
     data = _public_config(cfg)
     data.update({
         'role': role,
         'desired_role': cfg.get('desired_role') or role,
-        'health_status': health_status,
-        'health_text': health_text,
         'external_closed': _external_closed(),
-        'connection_snapshot': _openresty_connection_snapshot(),
-        'checks': checks,
         'steps': _step_list('master' if role == 'standby' else 'standby'),
         'step_list': _step_state(),
         'log': _read_logs(),
         'last_action': cfg.get('last_action') or '等待操作'
     })
+    if include_health:
+        checks = _health_checks(role)
+        health_status, health_text = _health_summary(checks)
+        data.update({'health_status': health_status, 'health_text': health_text, 'checks': checks})
     data['cloud_config_status'] = 'ready' if _monitor_enabled(cfg) else ('missing_pair_id' if cfg.get('monitor_url') and safeBool(cfg.get('monitor_enabled'), False) else 'disabled')
     data['cloud_last_error'] = cfg.get('cloud_last_error') or ''
     data['cloud_registered'] = bool(cfg.get('cloud_registered'))
-    _write_json(STATE_PATH, data)
+    if include_health:
+        _write_json(STATE_PATH, data)
+    else:
+        cached = _read_json(STATE_PATH, {})
+        cached.update(data)
+        _write_json(STATE_PATH, cached)
     return data
 
 
@@ -1588,7 +1591,7 @@ def _unlock():
 
 def get_state():
     cfg = _config()
-    return _return(True, 'ok', _state(cfg))
+    return _return(True, 'ok', _state(cfg, include_health=False))
 
 
 def get_connection_snapshot():
