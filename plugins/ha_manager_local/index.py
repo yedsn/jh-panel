@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import signal
 import shlex
 import subprocess
@@ -43,6 +44,7 @@ MYSQL_PY = os.path.join(PANEL_DIR, 'scripts/mysql.py')
 MYSQL_APT_INDEX = os.path.join(PANEL_DIR, 'plugins/mysql-apt/index.py')
 RSYNCD_INDEX = os.path.join(PANEL_DIR, 'plugins/rsyncd/index.py')
 OPENRESTY_INDEX = os.path.join(PANEL_DIR, 'plugins/openresty/index.py')
+OPENRESTY_CONF = '/www/server/openresty/nginx/conf/nginx.conf'
 JIANGHUJS_PREHEAT_TASK_NAME = 'JianghuJS管理器项目预备'
 OS_TOOL_DIR = os.path.join(PANEL_DIR, 'scripts/os_tool/vm/default')
 STANDBY_SYNC_PUBLIC_KEY = '/root/.ssh/standby_sync.pub'
@@ -716,6 +718,258 @@ def _systemctl_exists(service):
     return code == 0 and bool(out.strip())
 
 
+def _connection_snapshot_unavailable(reason, port=''):
+    return {
+        'available': False,
+        'active': None,
+        'raw_active': None,
+        'reading': None,
+        'writing': None,
+        'waiting': None,
+        'accepts': None,
+        'handled': None,
+        'requests': None,
+        'port': port or '',
+        'collected_at': _now(),
+        'reason': str(reason or '连接数暂时无法获取')
+    }
+
+
+def _nginx_listen_port(value):
+    value = str(value or '').strip().split()[0] if str(value or '').strip() else ''
+    if not value or value.startswith('$') or value.startswith('unix:'):
+        return ''
+    if value.startswith('['):
+        value = value.split(']', 1)[-1].lstrip(':')
+    elif ':' in value:
+        value = value.rsplit(':', 1)[-1]
+    if not value.isdigit():
+        return ''
+    port = _safe_int(value, 0)
+    return str(port) if 1 <= port <= 65535 else ''
+
+
+def _endpoint_port(value):
+    value = str(value or '').strip()
+    if not value:
+        return ''
+    if value.startswith('['):
+        value = value.rsplit(']:', 1)[-1]
+    elif ':' in value:
+        value = value.rsplit(':', 1)[-1]
+    return _nginx_listen_port(value)
+
+
+def _openresty_listen_ports():
+    out, err, code = mw.execShell('ss -H -ltnp')
+    ports = []
+    for line in str(out or '').splitlines():
+        if 'openresty' not in line and 'nginx' not in line:
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        port = _endpoint_port(parts[3])
+        if port and port not in ports:
+            ports.append(port)
+    if ports:
+        return ports, ''
+    return [], '未发现 OpenResty 监听端口'
+
+
+def _openresty_keepalive_timeout():
+    result = {
+        'available': False,
+        'value': '',
+        'text': '未能从当前 OpenResty 配置识别',
+        'reason': ''
+    }
+    if not os.path.exists(OPENRESTY_CONF):
+        result['reason'] = 'OpenResty 配置文件不存在'
+        return result
+    try:
+        content = mw.readFile(OPENRESTY_CONF)
+    except Exception as e:
+        result['reason'] = '读取 OpenResty 配置失败: ' + str(e)[:160]
+        return result
+    content = '\n'.join(line.split('#', 1)[0] for line in str(content or '').splitlines())
+    match = re.search(r'\bkeepalive_timeout\s+([^;\s]+)', content, re.I)
+    if not match:
+        result['reason'] = '当前 OpenResty 配置未设置 keepalive_timeout'
+        return result
+    value = match.group(1).strip()
+    unit_match = re.match(r'^(\d+)(ms|s|m|h|d|w|M|y)?$', value)
+    if not unit_match:
+        result['reason'] = 'keepalive_timeout 配置格式无法识别: ' + value[:80]
+        return result
+    amount, unit = unit_match.groups()
+    unit_text = {
+        '': '秒',
+        'ms': '毫秒',
+        's': '秒',
+        'm': '分钟',
+        'h': '小时',
+        'd': '天',
+        'w': '周',
+        'M': '个月',
+        'y': '年'
+    }[unit or '']
+    result.update({
+        'available': True,
+        'value': value,
+        'text': '约 {0} {1}'.format(amount, unit_text)
+    })
+    return result
+
+
+def _connection_details_result(data):
+    data['keepalive_timeout'] = _openresty_keepalive_timeout()
+    return data
+
+
+def _openresty_connection_details(limit=200):
+    if not _systemctl_active('openresty'):
+        return _connection_details_result({'available': False, 'connections': [], 'total': 0, 'truncated': False, 'collected_at': _now(), 'reason': 'OpenResty 未运行'})
+    ports, port_error = _openresty_listen_ports()
+    if not ports:
+        return _connection_details_result({'available': False, 'connections': [], 'total': 0, 'truncated': False, 'collected_at': _now(), 'reason': port_error})
+    out, err, code = mw.execShell('ss -Htn state established')
+    if code != 0:
+        return _connection_details_result({'available': False, 'connections': [], 'total': 0, 'truncated': False, 'collected_at': _now(), 'reason': '读取 TCP 连接失败: ' + str(err or out or '未知错误')[:160]})
+    connections = []
+    for line in str(out or '').splitlines():
+        parts = line.split()
+        offset = 1 if parts and parts[0].upper() in ('ESTAB', 'ESTABLISHED') else 0
+        if len(parts) < offset + 4:
+            continue
+        local_port = _endpoint_port(parts[offset + 2])
+        if local_port not in ports:
+            continue
+        connections.append({
+            'local_port': local_port,
+            'remote_address': parts[offset + 3],
+            'recv_q': parts[offset],
+            'send_q': parts[offset + 1]
+        })
+    total = len(connections)
+    return _connection_details_result({
+        'available': True,
+        'connections': connections[:limit],
+        'total': total,
+        'truncated': total > limit,
+        'listen_ports': ports,
+        'collected_at': _now(),
+        'reason': ''
+    })
+
+
+def _openresty_status_ports():
+    if not os.path.exists(OPENRESTY_CONF):
+        return [], 'OpenResty 配置文件不存在'
+    try:
+        content = mw.readFile(OPENRESTY_CONF)
+    except Exception as e:
+        return [], '读取 OpenResty 配置失败: ' + str(e)[:160]
+    lines = []
+    for line in str(content or '').splitlines():
+        lines.append(line.split('#', 1)[0])
+    ports = []
+    depth = 0
+    server_lines = None
+    server_depth = 0
+    for line in lines:
+        stripped = line.strip()
+        if server_lines is None and re.search(r'\bserver\s*\{', stripped):
+            server_lines = []
+            server_depth = depth
+        if server_lines is not None:
+            server_lines.append(line)
+        depth += line.count('{') - line.count('}')
+        if server_lines is not None and depth <= server_depth:
+            block = '\n'.join(server_lines)
+            if re.search(r'location\s+(?:=\s*)?/nginx_status\b', block) and re.search(r'\bstub_status\s+on\s*;', block):
+                for listen in re.findall(r'\blisten\s+([^;]+);', block, re.I):
+                    port = _nginx_listen_port(listen)
+                    if port and port not in ports:
+                        ports.append(port)
+            server_lines = None
+    if ports:
+        return ports, ''
+    return [], '未找到包含 /nginx_status 和 stub_status 的监听端口'
+
+
+def _parse_openresty_status(text, port=''):
+    text = str(text or '')
+    patterns = {
+        'active': r'Active\s+connections\s*:\s*(\d+)',
+        'reading': r'Reading\s*:\s*(\d+)',
+        'writing': r'Writing\s*:\s*(\d+)',
+        'waiting': r'Waiting\s*:\s*(\d+)'
+    }
+    result = {}
+    raw_active = None
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, re.I)
+        if not match:
+            raise ValueError('状态页缺少 ' + key + ' 指标')
+        result[key] = int(match.group(1))
+        if key == 'active':
+            raw_active = result[key]
+    totals = re.search(r'server\s+accepts\s+handled\s+requests\s*\r?\n\s*(\d+)\s+(\d+)\s+(\d+)', text, re.I)
+    if totals:
+        result['accepts'] = int(totals.group(1))
+        result['handled'] = int(totals.group(2))
+        result['requests'] = int(totals.group(3))
+    else:
+        result['accepts'] = None
+        result['handled'] = None
+        result['requests'] = None
+    # stub_status counts this status request itself as one active connection.
+    # Remove it so the displayed count aligns with the TCP detail list.
+    result['raw_active'] = raw_active
+    result['active'] = max(raw_active - 1, 0)
+    if result['writing'] > 0:
+        result['writing'] -= 1
+    result.update({'available': True, 'port': port, 'collected_at': _now(), 'reason': ''})
+    return result
+
+
+def _read_openresty_status(port):
+    url = 'http://127.0.0.1:{0}/nginx_status'.format(port)
+    request = urllib.request.Request(url, headers={'Host': '127.0.0.1', 'Connection': 'close'})
+    with urllib.request.urlopen(request, timeout=1) as response:
+        return response.read(65536).decode('utf-8', errors='replace')
+
+
+def _openresty_connection_snapshot():
+    if not _systemctl_active('openresty'):
+        return _connection_snapshot_unavailable('OpenResty 未运行')
+    ports, discovery_error = _openresty_status_ports()
+    if not ports:
+        ports = ['80']
+    errors = [discovery_error] if discovery_error else []
+    for port in ports:
+        try:
+            return _parse_openresty_status(_read_openresty_status(port), port)
+        except Exception as e:
+            errors.append('端口 {0}: {1}'.format(port, str(e)[:120]))
+    return _connection_snapshot_unavailable('；'.join(errors) or 'OpenResty 状态页不可访问', ports[0])
+
+
+def _connection_snapshot_log(prefix, snapshot):
+    snapshot = snapshot or {}
+    if not snapshot.get('available'):
+        return '{0}：当前连接数暂时无法获取，原因：{1}'.format(prefix, snapshot.get('reason') or '未知原因')
+    return '{0}：当前活动连接 {1}，Reading {2}，Writing {3}，Waiting {4}，采集时间 {5}'.format(
+        prefix,
+        snapshot.get('active'),
+        snapshot.get('reading'),
+        snapshot.get('writing'),
+        snapshot.get('waiting'),
+        snapshot.get('collected_at') or '未知'
+    )
+
+
 def _cron_status(name):
     names = name if isinstance(name, list) else [name]
     for cron_name in names:
@@ -1019,6 +1273,7 @@ def _state(cfg=None):
         'health_status': health_status,
         'health_text': health_text,
         'external_closed': _external_closed(),
+        'connection_snapshot': _openresty_connection_snapshot(),
         'checks': checks,
         'steps': _step_list('master' if role == 'standby' else 'standby'),
         'step_list': _step_state(),
@@ -1336,6 +1591,17 @@ def get_state():
     return _return(True, 'ok', _state(cfg))
 
 
+def get_connection_snapshot():
+    return _return(True, 'ok', {'connection_snapshot': _openresty_connection_snapshot()})
+
+
+def get_connection_details():
+    return _return(True, 'ok', {
+        'connection_snapshot': _openresty_connection_snapshot(),
+        'connection_details': _openresty_connection_details()
+    })
+
+
 def title_state():
     cfg = _config()
     return _return(True, 'ok', _write_panel_title_state(cfg))
@@ -1502,13 +1768,24 @@ def reset_step():
 
 
 def close_external_service():
+    snapshot = _openresty_connection_snapshot()
+    _append_log(_connection_snapshot_log('关闭对外服务前连接快照', snapshot))
     try:
         logs = _openresty_standby()
         _append_log('关闭对外服务完成')
         _queue_cloud_report('external_service_changed')
-        return _return(True, '关闭对外服务完成', {'external_closed': _external_closed(), 'logs': logs.splitlines(), 'state_snapshot': _state(_config())})
+        return _return(True, '关闭对外服务完成', {
+            'external_closed': _external_closed(),
+            'connection_snapshot': snapshot,
+            'logs': logs.splitlines(),
+            'state_snapshot': _state(_config())
+        })
     except Exception as e:
-        return _return(False, str(e), {'repair': _repair_guidance('standby', 'close_external', str(e))})
+        _append_log('关闭对外服务失败: ' + str(e))
+        return _return(False, str(e), {
+            'connection_snapshot': snapshot,
+            'repair': _repair_guidance('standby', 'close_external', str(e))
+        })
 
 
 def open_external_service():
@@ -1625,6 +1902,10 @@ if __name__ == '__main__':
         print(status())
     elif func == 'get_state':
         print(get_state())
+    elif func == 'get_connection_snapshot':
+        print(get_connection_snapshot())
+    elif func == 'get_connection_details':
+        print(get_connection_details())
     elif func == 'title_state':
         print(title_state())
     elif func == 'health_check':

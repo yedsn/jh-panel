@@ -4,6 +4,7 @@ var hmlState = {
   desired_role: 'standby',
   switch_status: 'idle',
   external_closed: false,
+  connection_snapshot: {available: false, reason: '当前连接数暂时无法获取'},
   target_role: 'master',
   host_id: '',
   host_name: '',
@@ -43,6 +44,7 @@ var hmlState = {
 
 var hmlFlowConfig = null;
 var hmlFlowConfigLoaded = false;
+var hmlConnectionRefreshBusy = false;
 
 function hmlEnsureFlowConfig(callback) {
   if (hmlFlowConfigLoaded) {
@@ -412,6 +414,101 @@ function hmlExternalServiceButtonClass() {
   return hmlExternalServiceNormal(nextExternalClosed) ? 'btn-success' : 'btn-danger';
 }
 
+function hmlConnectionSnapshotHtml(snapshot, compact) {
+  snapshot = snapshot || {};
+  if (!snapshot.available) {
+    return '<span class="hml-connection-unavailable">当前连接数暂时无法获取' + (snapshot.reason ? '：' + hmlHtml(snapshot.reason) : '') + '</span>';
+  }
+  var connectionClass = Number(snapshot.active || 0) > 0 ? 'hml-connection-detail-link-active' : 'hml-connection-detail-link-empty';
+  var values = [
+    '<span class="hml-connection-label">当前外部活动连接 </span><span class="hml-connection-detail-link ' + connectionClass + '">' + hmlHtml(snapshot.active) + '</span>',
+    'Reading ' + hmlHtml(snapshot.reading),
+    'Writing ' + hmlHtml(snapshot.writing),
+    'Waiting ' + hmlHtml(snapshot.waiting)
+  ];
+  var time = snapshot.collected_at ? '<span class="hml-connection-time">采集于 ' + hmlHtml(snapshot.collected_at) + '</span>' : '';
+  var detailRow = '<span class="hml-connection-values hml-connection-detail-row" onclick="hmlShowConnectionDetails()" onkeydown="hmlConnectionDetailKeydown(event)" role="button" tabindex="0" title="查看当前 TCP 连接详情">' + values.join('，') + '</span>';
+  if (compact) return detailRow + time;
+  return '<div class="hml-connection-detail-row-wrap">' + detailRow + time + '</div>';
+}
+
+function hmlConnectionDetailKeydown(event) {
+  if (!event || (event.key !== 'Enter' && event.key !== ' ')) return;
+  event.preventDefault();
+  hmlShowConnectionDetails();
+}
+
+function hmlConnectionDetailsHtml(details) {
+  details = details || {};
+  var keepalive = details.keepalive_timeout || {};
+  var keepaliveText = keepalive.available ? keepalive.text : '未能识别（' + (keepalive.reason || '配置不可用') + '）';
+  var mechanismNote = '<div class="hml-connection-detail-note">网页请求完成后，浏览器或其他客户端可能因 HTTP keep-alive 暂时保持 TCP 连接，当前 keep-alive 配置为' + hmlHtml(keepaliveText) + '。</div>';
+  if (!details.available) {
+    return '<div class="hml-connection-detail-wrap">' +
+      mechanismNote +
+      '<div class="hml-connection-detail-empty">当前连接详情暂时无法获取' + (details.reason ? '：' + hmlHtml(details.reason) : '') + '</div>' +
+    '</div>';
+  }
+  var rows = (details.connections || []).map(function(item) {
+    return '<tr><td>' + hmlHtml(item.remote_address || '-') + '</td><td>' + hmlHtml(item.local_port || '-') + '</td><td>' + hmlHtml(item.recv_q || '0') + '</td><td>' + hmlHtml(item.send_q || '0') + '</td></tr>';
+  }).join('');
+  var empty = rows ? '' : '<tr><td colspan="4" class="hml-connection-detail-empty">当前没有已建立的 OpenResty TCP 连接</td></tr>';
+  var truncated = details.truncated ? '<div class="hml-connection-detail-note">连接较多，仅展示前 ' + hmlHtml((details.connections || []).length) + ' 条，共 ' + hmlHtml(details.total) + ' 条。</div>' : '';
+  return '<div class="hml-connection-detail-wrap">' +
+    mechanismNote +
+    '<table class="table table-hover hml-connection-detail-table"><thead><tr><th>远端地址</th><th>本机端口</th><th>接收队列</th><th>发送队列</th></tr></thead><tbody>' + rows + empty + '</tbody></table>' +
+    truncated +
+    '<div class="hml-connection-detail-time">采集于 ' + hmlHtml(details.collected_at || '未知') + '</div>' +
+  '</div>';
+}
+
+function hmlShowConnectionDetails() {
+  var loading = layer.msg('正在获取连接详情...', {icon: 16, time: 0, shade: 0.2});
+  hmlPost('get_connection_details', {}, function(data) {
+    layer.close(loading);
+    layer.open({
+      type: 1,
+      title: '当前连接详情',
+      area: ['700px', '520px'],
+      maxmin: true,
+      content: '<div class="hml-connection-detail-dialog">' + hmlConnectionDetailsHtml(data.connection_details) + '</div>'
+    });
+  }, function(error) {
+    layer.close(loading);
+    layer.msg((error && error.msg) || '连接详情获取失败', {icon: 2});
+  });
+}
+
+function hmlCloseExternalServiceMessage(snapshot) {
+  return '<div class="hml-close-external-confirm">' +
+    '<div class="hml-close-external-title">关闭 OpenResty 可能中断当前访问连接。</div>' +
+    '<div class="hml-close-external-snapshot">' + hmlConnectionSnapshotHtml(snapshot) + '</div>' +
+    '<div class="hml-close-external-note">连接快照仅反映当前连接，不等同于真实用户人数。确认后将停止 OpenResty。</div>' +
+  '</div>';
+}
+
+function hmlConnectionSnapshotResultText(snapshot) {
+  snapshot = snapshot || {};
+  if (!snapshot.available) return '关闭前连接数暂时无法获取：' + (snapshot.reason || '未知原因');
+  return '关闭前活动连接 ' + snapshot.active + '（Reading ' + snapshot.reading + '，Writing ' + snapshot.writing + '，Waiting ' + snapshot.waiting + '）';
+}
+
+function hmlRefreshConnectionSnapshot() {
+  if (hmlConnectionRefreshBusy) return;
+  hmlConnectionRefreshBusy = true;
+  var button = $('#hmlConnectionRefreshBtn');
+  button.prop('disabled', true).text('采集中');
+  hmlPost('get_connection_snapshot', {}, function(data) {
+    hmlConnectionRefreshBusy = false;
+    hmlState.connection_snapshot = data.connection_snapshot || {available: false, reason: '当前连接数暂时无法获取'};
+    if (hmlState.view === 'overview') hmlRenderOverview();
+  }, function(error) {
+    hmlConnectionRefreshBusy = false;
+    button.prop('disabled', false).text('刷新');
+    layer.msg((error && error.msg) || '连接数采集失败', {icon: 2});
+  });
+}
+
 function hmlOpenRoleCorrectDialog() {
   var selectedRole = hmlState.role === 'master' ? 'master' : 'standby';
   var html = '<div class="hml-role-correct-dialog" style="padding:18px 22px;line-height:28px;">' +
@@ -450,11 +547,12 @@ function hmlRenderOverview() {
   var promoteBtn = '<button class="btn ' + (promoteDisabled ? 'btn-default' : 'btn-success') + ' btn-sm" onclick="hmlOpenSwitchDialog(\'master\')" title="' + promoteTitle + '"' + (promoteDisabled ? ' disabled' : '') + '>备-&gt;主</button>';
   var demoteBtn = '<button class="btn ' + (demoteDisabled ? 'btn-default' : 'btn-success') + ' btn-sm" onclick="hmlOpenSwitchDialog(\'standby\')" title="' + demoteTitle + '"' + (demoteDisabled ? ' disabled' : '') + '>主-&gt;备</button>';
   var roleCorrection = '<a href="javascript:;" class="hml-role-correct" onclick="hmlOpenRoleCorrectDialog()">校正</a>';
+  var connectionSnapshot = hmlConnectionSnapshotHtml(hmlState.connection_snapshot, true);
   var html = '<div class="hml-topbar"><div><div class="hml-title">主备管理</div><div class="hml-sub">查看本机主备状态，必要时执行升主、降从与对外服务控制。</div></div><div class="hml-actions">' + promoteBtn + demoteBtn + '<button class="btn ' + hmlExternalServiceButtonClass() + ' btn-sm" onclick="hmlToggleExternalService()">' + hmlHtml(hmlExternalServiceButtonText()) + '</button><button class="btn btn-default btn-sm" onclick="hmlRunHealthCheck()">重新自检</button></div></div>' +
     '<div class="hml-panel"><div class="hml-panel-body">' +
       '<table class="table table-hover hml-overview-table"><tbody>' +
         '<tr><th>当前主备状态</th><td>' + hmlPill(hmlState.role === 'master' ? 'ok' : 'info', hmlRoleShortText(hmlState.role)) + roleCorrection + '</td></tr>' +
-        '<tr><th>对外服务</th><td>' + hmlPill(externalNormal ? 'ok' : 'bad', hmlState.external_closed ? '已关闭' : '开放中') + '<span class="hml-overview-note">' + hmlHtml(hmlState.external_closed ? 'OpenResty 已停止' : 'OpenResty 运行中') + '</span></td></tr>' +
+        '<tr><th>对外服务</th><td>' + hmlPill(externalNormal ? 'ok' : 'bad', hmlState.external_closed ? '已关闭' : '开放中') + '<span class="hml-overview-note">' + hmlHtml(hmlState.external_closed ? 'OpenResty 已停止' : 'OpenResty 运行中') + '</span><div class="hml-connection-summary">' + connectionSnapshot + '<button type="button" id="hmlConnectionRefreshBtn" class="btn btn-default btn-xs hml-connection-refresh" onclick="hmlRefreshConnectionSnapshot()" title="重新采集当前连接数">刷新</button></div></td></tr>' +
         '<tr><th>自检状态</th><td>' + hmlPill(failChecks ? 'bad' : (warnChecks ? 'warn' : 'ok'), failChecks ? '有异常' : (warnChecks ? '有提醒' : '正常')) + '<span class="hml-overview-note">异常项 ' + failChecks + ' 个，提醒项 ' + warnChecks + ' 个</span></td></tr>' +
         '<tr><th>云监控</th><td>' + (monitorConfigured ? hmlPill(monitorEnabled ? 'ok' : 'warn', monitorEnabled ? '已启用' : '未启用') : hmlPill('warn', '未配置')) + '<span class="hml-overview-note">' + hmlHtml(monitorEnabled ? '最近上报：' + (hmlState.last_report_at || '未上报') : (monitorConfigured ? '已配置地址，但云监控相关功能已关闭' : '未启用云监控相关功能')) + '</span></td></tr>' +
       '</tbody></table>' +
@@ -1365,12 +1463,37 @@ function hmlToggleExternalService() {
       hmlRender();
     });
   } else {
-    hmlPost('close_external_service', {}, function(data) {
-      if (data.state_snapshot) hmlState = $.extend(true, hmlState, data.state_snapshot);
-      hmlRefreshBrowserTitle();
-      hmlLog('关闭对外服务完成：OpenResty 已停止');
-      layer.msg('已关闭 OpenResty', {icon: 1});
-      hmlRender();
+    hmlPost('get_connection_snapshot', {}, function(data) {
+      var preview = data.connection_snapshot || {available: false, reason: '当前连接数暂时无法获取'};
+      hmlSafeMessageConfirm('确认关闭对外服务', hmlCloseExternalServiceMessage(preview), function() {
+        hmlPost('close_external_service', {}, function(result) {
+          if (result.state_snapshot) hmlState = $.extend(true, hmlState, result.state_snapshot);
+          hmlRefreshBrowserTitle();
+          var snapshotText = hmlConnectionSnapshotResultText(result.connection_snapshot);
+          hmlLog('关闭对外服务完成：OpenResty 已停止；' + snapshotText);
+          layer.msg('已关闭 OpenResty；' + snapshotText, {icon: 1, time: 4000});
+          hmlRender();
+        }, function(error) {
+          var failedSnapshot = (error && error.data && error.data.connection_snapshot) || preview;
+          hmlLog('关闭对外服务失败；' + hmlConnectionSnapshotResultText(failedSnapshot));
+          layer.msg((error && error.msg) || '关闭对外服务失败', {icon: 2});
+        });
+      });
+    }, function(error) {
+      var unavailable = {available: false, reason: (error && error.msg) || '连接快照接口暂时不可用'};
+      hmlSafeMessageConfirm('确认关闭对外服务', hmlCloseExternalServiceMessage(unavailable), function() {
+        hmlPost('close_external_service', {}, function(result) {
+          if (result.state_snapshot) hmlState = $.extend(true, hmlState, result.state_snapshot);
+          hmlRefreshBrowserTitle();
+          var snapshotText = hmlConnectionSnapshotResultText(result.connection_snapshot || unavailable);
+          hmlLog('关闭对外服务完成：OpenResty 已停止；' + snapshotText);
+          layer.msg('已关闭 OpenResty；' + snapshotText, {icon: 1, time: 4000});
+          hmlRender();
+        }, function(closeError) {
+          hmlLog('关闭对外服务失败；' + hmlConnectionSnapshotResultText((closeError && closeError.data && closeError.data.connection_snapshot) || unavailable));
+          layer.msg((closeError && closeError.msg) || '关闭对外服务失败', {icon: 2});
+        });
+      });
     });
   }
 }

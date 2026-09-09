@@ -29,6 +29,31 @@
 .hml-overview-table th,.hml-overview-table td{vertical-align:middle!important;}
 .hml-overview-table th{width:120px;color:#777;font-weight:normal;background:#fafafa;}
 .hml-overview-note{margin-left:12px;color:#888;line-height:22px;}
+.hml-connection-summary{margin-top:5px;color:#666;font-size:12px;line-height:20px;word-break:break-word;}
+.hml-connection-refresh{margin-left:8px;padding:2px 6px;line-height:18px;vertical-align:1px;}
+.hml-connection-detail-row{display:inline;cursor:pointer;outline:0;}
+.hml-connection-detail-row:hover{text-decoration:underline;}
+.hml-connection-detail-row:focus{box-shadow:0 0 0 2px #b8d7ef;}
+.hml-connection-label{color:#222;}
+.hml-connection-detail-link{font-weight:normal;}
+.hml-connection-detail-link-empty{color:#222;}
+.hml-connection-detail-link-empty:hover{color:#222;}
+.hml-connection-detail-link-active{color:#d9822b;}
+.hml-connection-detail-link-active:hover{color:#b86412;}
+.hml-connection-time{margin-left:10px;color:#999;white-space:nowrap;}
+.hml-connection-unavailable{color:#9a6200;}
+.hml-connection-detail-dialog{padding:14px 16px;box-sizing:border-box;}
+.hml-connection-detail-note{color:#777;font-size:12px;line-height:20px;margin-bottom:10px;word-break:break-word;}
+.hml-connection-detail-table{margin-bottom:8px;table-layout:fixed;}
+.hml-connection-detail-table th{background:#fafafa;color:#666;font-weight:normal;}
+.hml-connection-detail-table th,.hml-connection-detail-table td{vertical-align:middle!important;word-break:break-all;}
+.hml-connection-detail-table th:first-child{width:48%;}
+.hml-connection-detail-empty{text-align:center;color:#999;padding:18px!important;}
+.hml-connection-detail-time{color:#999;font-size:12px;line-height:20px;}
+.hml-close-external-confirm{padding:2px 4px;line-height:24px;}
+.hml-close-external-title{font-weight:600;color:#b02a25;}
+.hml-close-external-snapshot{margin-top:10px;padding:9px 10px;border:1px solid #d9e7f4;background:#f5faff;color:#555;}
+.hml-close-external-note{margin-top:10px;color:#777;}
 .hml-step-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:12px;}
 .hml-step{border:1px solid #e6e9ef;border-radius:4px;background:#fafbfc;padding:10px;min-height:70px;}
 .hml-step.active{border-color:#8dbde8;background:#eef7ff;}
@@ -166,7 +191,7 @@
 .hml-monitor-switch input:checked + .hml-switch-slider:after{left:23px;}
 .hml-switch-text{color:#555;}
 @media(max-width:1100px){.hml-grid,.hml-check-grid,.hml-step-list,.hml-role-select,.hml-flow-stages{grid-template-columns:1fr 1fr;}.hml-flow-body{grid-template-columns:1fr;overflow:auto;}}
-@media(max-width:720px){.hml-grid,.hml-check-grid,.hml-step-list,.hml-role-select,.hml-flow-stages{grid-template-columns:1fr;}.hml-actions{justify-content:flex-start;}}
+@media(max-width:720px){.hml-grid,.hml-check-grid,.hml-step-list,.hml-role-select,.hml-flow-stages{grid-template-columns:1fr;}.hml-actions{justify-content:flex-start;}.hml-connection-time{display:block;margin-left:0;}.hml-close-external-snapshot{word-break:break-word;}}
 </style>
 
 <div class="bt-form hml-page">
@@ -187,7 +212,7 @@
 <script type="text/javascript">
 resetPluginWinWidth(980);
 resetPluginWinHeight(620);
-$.getScript('/plugins/file?name=ha_manager_local&f=js/ha_manager_local.js&v=202609071930', function(){
+$.getScript('/plugins/file?name=ha_manager_local&f=js/ha_manager_local.js&v=202609091420', function(){
   hmlBoot();
 });
 </script>
