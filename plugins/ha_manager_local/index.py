@@ -976,7 +976,10 @@ def _openresty_connection_snapshot():
         return _connection_snapshot_unavailable('OpenResty 未运行')
     ports, discovery_error = _openresty_status_ports()
     if not ports:
-        ports = ['80']
+        ports, listen_error = _openresty_listen_ports()
+        if not ports:
+            return _connection_snapshot_unavailable(discovery_error or listen_error or '未找到 OpenResty 状态页配置')
+        discovery_error = (discovery_error or '未找到 OpenResty 状态页配置') + '；已改用 OpenResty 实际监听端口探测'
     errors = [discovery_error] if discovery_error else []
     for port in ports:
         try:

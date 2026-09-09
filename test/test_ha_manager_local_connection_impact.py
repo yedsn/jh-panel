@@ -114,12 +114,27 @@ Reading: 1 Writing: 2 Waiting: 9
 
         with open(config_path, 'w', encoding='utf-8') as fp:
             fp.write('http { server { listen 82; } }\n')
+        module._openresty_listen_ports = lambda: ([], '未发现 OpenResty 监听端口')
         module._read_openresty_status = lambda port: (_ for _ in ()).throw(RuntimeError('不可访问'))
         no_status_page = module._openresty_connection_snapshot()
         assert no_status_page['available'] is False
-        assert '未找到包含 /nginx_status 和 stub_status 的监听端口' in no_status_page['reason']
-        assert '端口 80' in no_status_page['reason']
+        assert no_status_page['reason'] == '未找到包含 /nginx_status 和 stub_status 的监听端口'
+        assert no_status_page['port'] == ''
 
+        module._openresty_listen_ports = lambda: (['80'], '')
+        module._read_openresty_status = lambda port: status_text
+        fallback_probe = module._openresty_connection_snapshot()
+        assert fallback_probe['available'] is True
+        assert fallback_probe['port'] == '80'
+
+        with open(config_path, 'w', encoding='utf-8') as fp:
+            fp.write('''http {
+  server {
+    listen 80;
+    location /nginx_status { stub_status on; }
+  }
+}
+''')
         module._read_openresty_status = lambda port: (_ for _ in ()).throw(RuntimeError('Remote end closed connection without response'))
         closed_connection = module._openresty_connection_snapshot()
         assert '端口 80: 本机服务提前关闭了状态页连接' in closed_connection['reason']

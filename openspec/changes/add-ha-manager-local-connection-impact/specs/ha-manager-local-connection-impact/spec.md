@@ -19,6 +19,10 @@
 - **WHEN** OpenResty 未运行、状态页无法访问、端口无法定位或响应不符合 `stub_status` 格式
 - **THEN** 插件返回 `available=false` 和可展示的原因摘要，且不将普通 HTML 或异常文本解析为连接指标
 
+#### Scenario: 未配置状态页
+- **WHEN** OpenResty 配置中未找到包含 `/nginx_status` 和 `stub_status` 的 server
+- **THEN** 插件可使用实际由 OpenResty 监听的端口进行严格探测；若仍无法获取状态页，则返回状态页未配置或不可访问的原因，且不得将普通 HTTP 响应解析为连接指标
+
 ### Requirement: 总览展示当前连接影响范围
 本地主备管理插件 SHALL 在总览页的对外服务信息中展示最新连接快照。界面 MUST 将 `active` 标识为“当前活动连接”，并展示 Reading、Writing、Waiting 和采集时间；界面 MUST 不将任何连接指标标识为真实用户人数。
 
