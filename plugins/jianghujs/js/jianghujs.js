@@ -18,39 +18,61 @@ function serviceConfigPanel() {
     clearRefreshTableTask();
     var content = '\
     <div class="safe container-fluid jianghujs-service-config" style="overflow:hidden;">\
+        <style>\
+            .jianghujs-service-config .card { padding: 18px 20px; }\
+            .jianghujs-service-config .jianghujs-task-heading { display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap; }\
+            .jianghujs-service-config .jianghujs-task-description { line-height:20px; }\
+            .jianghujs-service-config .jianghujs-task-field { display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap; }\
+            .jianghujs-service-config .jianghujs-task-label { min-width:42px; color:#555; }\
+            .jianghujs-service-config .jianghujs-task-time { display:flex; align-items:center; gap:6px; }\
+            .jianghujs-service-config .jianghujs-task-minute-n { display:flex; align-items:center; gap:6px; }\
+            .jianghujs-service-config .jianghujs-task-rules { gap:8px; line-height:32px; }\
+            .jianghujs-service-config .jianghujs-task-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }\
+            .jianghujs-service-config .jianghujs-task-actions .btn { margin:0; }\
+            @media (max-width: 700px) { .jianghujs-service-config .card { padding:15px; } .jianghujs-service-config .jianghujs-task-label { min-width:auto; } }\
+        </style>\
         <div class="card mb10" id="jianghujs-preheat-task">\
-            <div class="flex align-center mb10"><b>项目依赖预备</b><span class="ml10 c9">仅备用机启用；仅处理存在 package-lock.json 的项目，按登记顺序执行 npm ci。</span></div>\
-            <div class="flex align-center mb10 jianghujs-task-period">\
+            <div class="jianghujs-task-heading"><b>项目依赖预备</b><span class="c9 jianghujs-task-description">仅备用机启用；仅处理存在 package-lock.json 的项目，按登记顺序执行 npm ci。</span></div>\
+            <div class="jianghujs-task-field jianghujs-task-period">\
                 <input type="hidden" name="id" value="">\
-                <span>周期</span>\
-                <select class="bt-input-text ml10" name="period" style="width:100px;">\
+                <span class="jianghujs-task-label">周期</span>\
+                <select class="bt-input-text" name="period" style="width:100px;">\
                     <option value="day">每天</option>\
                     <option value="minute-n">N分钟</option>\
                 </select>\
-                <span class="ml10 task-day-time"><input class="bt-input-text" type="number" name="hour" min="0" max="23" value="2" style="width:58px;"> : <input class="bt-input-text" type="number" name="minute" min="0" max="59" value="0" style="width:58px;"></span>\
-                <span class="ml10 task-minute-n" style="display:none;">每 <input class="bt-input-text" type="number" name="minute-n" min="1" value="60" style="width:65px;"> 分钟</span>\
+                <span class="task-day-time jianghujs-task-time"><input class="bt-input-text" type="number" name="hour" min="0" max="23" value="2" style="width:58px;"><span>:</span><input class="bt-input-text" type="number" name="minute" min="0" max="59" value="0" style="width:58px;"></span>\
+                <span class="task-minute-n jianghujs-task-minute-n" style="display:none;"><span>每</span><input class="bt-input-text" type="number" name="minute-n" min="1" value="60" style="width:65px;"><span>分钟</span></span>\
             </div>\
-            <button class="btn btn-success btn-sm task-create" onclick="saveJianghujsServiceTask(\'preheat\')">创建</button>\
-            <button class="btn btn-success btn-sm task-update" style="display:none" onclick="saveJianghujsServiceTask(\'preheat\')">修改</button>\
-            <button class="btn btn-danger btn-sm task-delete" style="display:none" onclick="deleteJianghujsServiceTask(\'preheat\')">删除</button>\
+            <div class="jianghujs-task-actions">\
+                <button class="btn btn-success btn-sm task-create" onclick="saveJianghujsServiceTask(\'preheat\')">创建</button>\
+                <button class="btn btn-success btn-sm task-update" style="display:none" onclick="saveJianghujsServiceTask(\'preheat\')">修改</button>\
+                <button class="btn btn-danger btn-sm task-delete" style="display:none" onclick="deleteJianghujsServiceTask(\'preheat\')">删除</button>\
+            </div>\
         </div>\
         <div class="card" id="jianghujs-log-clean-task">\
-            <div class="flex align-center mb10"><b>项目日志清理</b><span class="ml10 c9">只清理项目中已开启“自动清理日志”的 logs 目录。</span></div>\
-            <div class="flex align-center mb10 jianghujs-task-period">\
+            <div class="jianghujs-task-heading"><b>项目日志清理</b><span class="c9 jianghujs-task-description">只清理项目中已开启“自动清理日志”的 logs 目录。</span></div>\
+            <div class="jianghujs-task-field jianghujs-task-period">\
                 <input type="hidden" name="id" value="">\
-                <span>周期</span>\
-                <select class="bt-input-text ml10" name="period" style="width:100px;">\
+                <span class="jianghujs-task-label">周期</span>\
+                <select class="bt-input-text" name="period" style="width:100px;">\
                     <option value="day">每天</option>\
                     <option value="minute-n">N分钟</option>\
                 </select>\
-                <span class="ml10 task-day-time"><input class="bt-input-text" type="number" name="hour" min="0" max="23" value="1" style="width:58px;"> : <input class="bt-input-text" type="number" name="minute" min="0" max="59" value="0" style="width:58px;"></span>\
-                <span class="ml10 task-minute-n" style="display:none;">每 <input class="bt-input-text" type="number" name="minute-n" min="1" value="60" style="width:65px;"> 分钟</span>\
+                <span class="task-day-time jianghujs-task-time"><input class="bt-input-text" type="number" name="hour" min="0" max="23" value="1" style="width:58px;"><span>:</span><input class="bt-input-text" type="number" name="minute" min="0" max="59" value="0" style="width:58px;"></span>\
+                <span class="task-minute-n jianghujs-task-minute-n" style="display:none;"><span>每</span><input class="bt-input-text" type="number" name="minute-n" min="1" value="60" style="width:65px;"><span>分钟</span></span>\
             </div>\
-            <div class="flex align-center mb10"><span>保留规则</span><span class="ml10"><input class="bt-input-text" type="number" name="saveAllDay" min="1" value="3" style="width:58px;"> 天内全部保留，其余只保留</span><span class="ml10"><input class="bt-input-text" type="number" name="saveOther" min="0" value="1" style="width:58px;"> 份，最长保留</span><span class="ml10"><input class="bt-input-text" type="number" name="saveMaxDay" min="1" value="30" style="width:58px;"> 天</span></div>\
-            <button class="btn btn-success btn-sm task-create" onclick="saveJianghujsServiceTask(\'log_clean\')">创建</button>\
-            <button class="btn btn-success btn-sm task-update" style="display:none" onclick="saveJianghujsServiceTask(\'log_clean\')">修改</button>\
-            <button class="btn btn-danger btn-sm task-delete" style="display:none" onclick="deleteJianghujsServiceTask(\'log_clean\')">删除</button>\
-            <button class="btn btn-default btn-sm task-migrate" style="display:none" onclick="migrateJianghujsLegacyLogCleanTasks()">迁移旧项目任务</button>\
+            <div class="jianghujs-task-field jianghujs-task-rules">\
+                <span class="jianghujs-task-label">保留规则</span>\
+                <span><input class="bt-input-text" type="number" name="saveAllDay" min="1" value="3" style="width:58px;"> 天内全部保留，其余只保留</span>\
+                <span><input class="bt-input-text" type="number" name="saveOther" min="0" value="1" style="width:58px;"> 份，最长保留</span>\
+                <span><input class="bt-input-text" type="number" name="saveMaxDay" min="1" value="30" style="width:58px;"> 天</span>\
+            </div>\
+            <div class="jianghujs-task-actions">\
+                <button class="btn btn-success btn-sm task-create" onclick="saveJianghujsServiceTask(\'log_clean\')">创建</button>\
+                <button class="btn btn-success btn-sm task-update" style="display:none" onclick="saveJianghujsServiceTask(\'log_clean\')">修改</button>\
+                <button class="btn btn-danger btn-sm task-delete" style="display:none" onclick="deleteJianghujsServiceTask(\'log_clean\')">删除</button>\
+                <button class="btn btn-default btn-sm task-migrate" style="display:none" onclick="migrateJianghujsLegacyLogCleanTasks()">迁移旧项目任务</button>\
+            </div>\
         </div>\
     </div>';
     $('.soft-man-con').html(content);
