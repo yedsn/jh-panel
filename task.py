@@ -776,10 +776,10 @@ if __name__ == "__main__":
     oar = setDaemon(oar)
     oar.start()
 
-    # MySQL Auto Start When Stopped Start
-    mast = threading.Thread(target=mysqlAutoStartWhenStopped)
-    mast = setDaemon(mast)
-    mast.start()
+    # MySQL Auto Start When Stopped Start - MySQL定时重启，可能导致xtrabackup恢复过程中重启mysql导致异常，暂时取消
+    # mast = threading.Thread(target=mysqlAutoStartWhenStopped)
+    # mast = setDaemon(mast)
+    # mast.start()
 
     # Panel Restart Start
     rps = threading.Thread(target=restartPanelService)
