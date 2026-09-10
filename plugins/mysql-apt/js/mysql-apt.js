@@ -1184,10 +1184,18 @@ function setBackupReq(db_name, obj){
     });
 }
 
+var mysqlAptDbListRequestId = 0;
+
 function dbList(page, search){
     var _data = {};
+    var requestId = ++mysqlAptDbListRequestId;
+    var keepSearchFocus = document.activeElement && document.activeElement.id == 'mysql-apt-db-search-input';
     if (typeof(page) =='undefined'){
         var page = 1;
+    }
+
+    if (typeof(search) == 'undefined' && $('#mysql-apt-db-search-input').length) {
+        search = $('#mysql-apt-db-search-input').val().trim();
     }
     
     _data['page'] = page;
@@ -1197,7 +1205,12 @@ function dbList(page, search){
         _data['search'] = search;
     }
     myPost('get_db_list_page', _data, function(data){
+        if (requestId != mysqlAptDbListRequestId) return;
+
         var rdata = $.parseJSON(data.data);
+        rdata.data.sort(function(a, b) {
+            return String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
+        });
         var list = '';
         for(i in rdata.data){
             list += '<tr>';
@@ -1246,6 +1259,15 @@ function dbList(page, search){
 
         //<button onclick="" id="dataRecycle" title="删除选中项" class="btn btn-default btn-sm" style="margin-left: 5px;"><span class="glyphicon glyphicon-trash" style="margin-right: 5px;"></span>回收站</button>
         //<button onclick="fixDbAccess(\'root\')" title="修复" class="btn btn-default btn-sm" type="button" style="margin-right: 5px;">修复</button>\
+        if ($('#mysql-apt-db-search-input').length) {
+            $('#DataBody tbody').html(list);
+            $('.databases-count').text(rdata.data.length);
+            readerTableChecked();
+            if (keepSearchFocus) $('#mysql-apt-db-search-input').focus();
+            return;
+        }
+
+        var searchValue = typeof(search) == 'undefined' ? '' : escapeHTML(search);
         var con = '<div class="safe bgw mysql-apt-db-list">\
             <button onclick="addDatabase()" title="添加数据库" class="btn btn-success btn-sm" type="button" style="margin-right: 5px;">添加数据库</button>\
             <button onclick="setRootPwd(0,\''+rdata.info['root_pwd']+'\')" title="设置MySQL管理员密码" class="btn btn-default btn-sm" type="button" style="margin-right: 5px;">root密码</button>\
@@ -1253,6 +1275,9 @@ function dbList(page, search){
             <button onclick="setDbAccess(\'root\')" title="ROOT权限" class="btn btn-default btn-sm" type="button" style="margin-right: 5px;">ROOT权限</button>\
             <button onclick="openMysqlTerminal()" title="打开MySQL终端" class="btn btn-default btn-sm" type="button" style="margin-right: 5px;">打开终端</button>\
             <button onclick="getChecksumReport()" title="获取Checksum报告" class="btn btn-default btn-sm" type="button" style="margin-right: 5px;">获取Checksum报告</button>\
+            <span class="mysql-apt-db-search">\
+                <input id="mysql-apt-db-search-input" class="bt-input-text" type="text" value="'+searchValue+'" placeholder="搜索数据库名" title="按数据库名称搜索">\
+            </span>\
             <span style="float:right">              \
                 <button batch="true" style="float: right;display: none;margin-left:10px;" onclick="delDbBatch();" title="删除选中项" class="btn btn-default btn-sm">删除选中</button>\
             </span>\
@@ -1266,19 +1291,18 @@ function dbList(page, search){
                     '+
                     // '<th>备份</th>'+
                     '<th>备注</th>\
-                    <th style="text-align:right; min-width: 154px;" width="154px" fixed="true">操作</th></tr></thead>\
+                    <th style="text-align:right; min-width: 260px;" width="260px" fixed="true">操作</th></tr></thead>\
                     <tbody>\
                     '+ list +'\
                     </tbody></table>\
-                    <tfoot>\
-                    <span>共 <b class="databases-count">' + rdata.data.length + '</b> 个数据库</span>\
-                  </tfoot>\
                 </div>\
-                <div id="databasePage" class="dataTables_paginate paging_bootstrap page"></div>\
-                <div class="table_toolbar" style="left:0px;">\
-                    <span class="sync btn btn-default btn-sm" style="margin-right:5px" onclick="syncToDatabase(1)" title="将选中数据库信息同步到服务器">同步选中</span>\
-                    <span class="sync btn btn-default btn-sm" style="margin-right:5px" onclick="syncToDatabase(0)" title="将所有数据库信息同步到服务器">同步所有</span>\
-                    <span class="sync btn btn-default btn-sm" onclick="syncGetDatabase()" title="从服务器获取数据库列表">从服务器获取</span>\
+                <div class="mysql-apt-db-list-footer">\
+                    <span>共 <b class="databases-count">' + rdata.data.length + '</b> 个数据库</span>\
+                    <div class="mysql-apt-db-list-actions">\
+                        <span class="sync btn btn-default btn-sm" onclick="syncToDatabase(1)" title="将选中数据库信息同步到服务器">同步选中</span>\
+                        <span class="sync btn btn-default btn-sm" onclick="syncToDatabase(0)" title="将所有数据库信息同步到服务器">同步所有</span>\
+                        <span class="sync btn btn-default btn-sm" onclick="syncGetDatabase()" title="从服务器获取数据库列表">从服务器获取</span>\
+                    </div>\
                 </div>\
             </div>\
         </div>';
@@ -1293,6 +1317,15 @@ function dbList(page, search){
 
         $(".soft-man-con").html(con); 
         // $('#databasePage').html(rdata.page);
+
+        var searchTimer;
+        $('#mysql-apt-db-search-input').on('input', function() {
+            var searchInput = this;
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(function() {
+                dbList(1, $(searchInput).val().trim());
+            }, 300);
+        });
 
         readerTableChecked();
     });

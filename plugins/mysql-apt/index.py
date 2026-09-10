@@ -1447,10 +1447,12 @@ def getDbListPage():
     conn = pSqliteDb('databases')
     limit = str((page - 1) * page_size) + ',' + str(page_size)
     condition = ''
+    condition_params = ()
     if not search == '':
-        condition = "name like '%" + search + "%'"
+        condition = 'name like ?'
+        condition_params = ('%' + search + '%',)
     field = 'id,pid,name,username,password,accept,rw,ps,addtime'
-    clist = conn.where(condition, ()).field(
+    clist = conn.where(condition, condition_params).field(
         field).limit(limit).order('id desc').select()
 
     backup_list = []
@@ -1473,7 +1475,7 @@ def getDbListPage():
         # if len(blist) > 0:
         #     clist[x]['is_backup'] = True
 
-    count = conn.where(condition, ()).count()
+    count = conn.where(condition, condition_params).count()
     _page = {}
     _page['count'] = count
     _page['p'] = page

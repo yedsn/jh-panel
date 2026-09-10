@@ -53,6 +53,30 @@
 		margin-right: 0;
 	}
 
+	.mysql-apt-db-search {
+		float: right;
+		margin-left: 10px;
+	}
+
+	.mysql-apt-db-search input {
+		width: 180px;
+		height: 30px;
+		padding: 5px 8px;
+		vertical-align: middle;
+	}
+
+	.mysql-apt-db-list-footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		min-height: 42px;
+		padding: 6px 0;
+	}
+
+	.mysql-apt-db-list-actions .btn {
+		margin-left: 5px;
+	}
+
 	/* Keep the database list frame in the plugin window and scroll its rows internally. */
 	.mysql-apt-db-list .mysql-apt-db-scroll {
 		height: min(420px, calc(100vh - 220px));
@@ -126,8 +150,8 @@
 	.mysql-apt-db-list .mysql-apt-db-scroll td:nth-child(6) {
 		position: sticky;
 		right: 0;
-		min-width: 154px;
-		width: 154px;
+		min-width: 260px;
+		width: 260px;
 		box-sizing: border-box;
 		background-color: #fff;
 		box-shadow: -2px 0 3px rgba(0, 0, 0, 0.06);
@@ -157,8 +181,8 @@
 	}
 </style>
 <script type="text/javascript">
-	resetPluginWinWidth(1000);
-	$.getScript("/plugins/file?name=mysql-apt&f=js/mysql-apt.js&v=202609100003", function () {
+	resetPluginWinWidth(1100);
+	$.getScript("/plugins/file?name=mysql-apt&f=js/mysql-apt.js&v=202609100009", function () {
 		pluginService('mysql-apt', $('.plugin_version').attr('version'));
 	});
 </script>
