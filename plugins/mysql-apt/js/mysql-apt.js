@@ -1202,8 +1202,8 @@ function dbList(page, search){
         for(i in rdata.data){
             list += '<tr>';
             list +='<td><input value="'+rdata.data[i]['id']+'" class="check" type="checkbox"></td>';
-            list += '<td>' + rdata.data[i]['name'] +'</td>';
-            list += '<td>' + rdata.data[i]['username'] +'</td>';
+            list += '<td title="' + escapeHTML(rdata.data[i]['name']) + '">' + rdata.data[i]['name'] +'</td>';
+            list += '<td title="' + escapeHTML(rdata.data[i]['username']) + '">' + rdata.data[i]['username'] +'</td>';
             list += '<td>' + 
                         '<span class="password" data-pw="'+rdata.data[i]['password']+`">${rdata.data[i]['password'] ? '***' : '<font color="red">密码未记录</font>'}</span>` +
                         '<span onclick="showHidePass(this)" class="glyphicon glyphicon-eye-open cursor pw-ico" style="margin-left:10px"></span>'+
@@ -1246,7 +1246,7 @@ function dbList(page, search){
 
         //<button onclick="" id="dataRecycle" title="删除选中项" class="btn btn-default btn-sm" style="margin-left: 5px;"><span class="glyphicon glyphicon-trash" style="margin-right: 5px;"></span>回收站</button>
         //<button onclick="fixDbAccess(\'root\')" title="修复" class="btn btn-default btn-sm" type="button" style="margin-right: 5px;">修复</button>\
-        var con = '<div class="safe bgw">\
+        var con = '<div class="safe bgw mysql-apt-db-list">\
             <button onclick="addDatabase()" title="添加数据库" class="btn btn-success btn-sm" type="button" style="margin-right: 5px;">添加数据库</button>\
             <button onclick="setRootPwd(0,\''+rdata.info['root_pwd']+'\')" title="设置MySQL管理员密码" class="btn btn-default btn-sm" type="button" style="margin-right: 5px;">root密码</button>\
             <button onclick="fixRootPwd(0)" title="更新真实ROOT密码到江湖面板" class="btn btn-default btn-sm" type="button" style="margin-right: 5px;">修复ROOT密码</button>\
@@ -1257,16 +1257,16 @@ function dbList(page, search){
                 <button batch="true" style="float: right;display: none;margin-left:10px;" onclick="delDbBatch();" title="删除选中项" class="btn btn-default btn-sm">删除选中</button>\
             </span>\
             <div class="divtable mtb10">\
-                <div class="tablescroll">\
+                <div class="tablescroll mysql-apt-db-scroll">\
                     <table id="DataBody" class="table table-hover" width="100%" cellspacing="0" cellpadding="0" border="0" style="border: 0 none;">\
-                    <tr><th width="30"><input class="check" onclick="checkSelect();" type="checkbox"></th>\
+                    <thead><tr><th width="30"><input class="check" onclick="checkSelect();" type="checkbox"></th>\
                     <th>数据库名</th>\
                     <th>用户名</th>\
-                    <th style="min-width: 180px;">密码</th>\
+                    <th style="min-width: 140px;">密码</th>\
                     '+
                     // '<th>备份</th>'+
                     '<th>备注</th>\
-                    <th style="text-align:right; min-width: 154px;" width="154px" fixed="true">操作</th></tr>\
+                    <th style="text-align:right; min-width: 154px;" width="154px" fixed="true">操作</th></tr></thead>\
                     <tbody>\
                     '+ list +'\
                     </tbody></table>\

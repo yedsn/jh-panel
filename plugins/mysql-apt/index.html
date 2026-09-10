@@ -52,10 +52,113 @@
 	#db_tools button:last-child {
 		margin-right: 0;
 	}
+
+	/* Keep the database list frame in the plugin window and scroll its rows internally. */
+	.mysql-apt-db-list .mysql-apt-db-scroll {
+		height: min(420px, calc(100vh - 220px));
+		min-height: 220px;
+		overflow: auto;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll .table {
+		border-collapse: separate;
+		border-spacing: 0;
+		min-width: 920px;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll thead th {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		background-color: #f6f6f6;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll th:nth-child(1),
+	.mysql-apt-db-list .mysql-apt-db-scroll td:nth-child(1) {
+		position: sticky;
+		left: 0;
+		width: 32px;
+		min-width: 32px;
+		box-sizing: border-box;
+		background-color: #fff;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll th:nth-child(2),
+	.mysql-apt-db-list .mysql-apt-db-scroll td:nth-child(2) {
+		position: sticky;
+		left: 32px;
+		width: 180px;
+		min-width: 180px;
+		max-width: 180px;
+		box-sizing: border-box;
+		background-color: #fff;
+		box-shadow: 2px 0 3px rgba(0, 0, 0, 0.06);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll th:nth-child(3),
+	.mysql-apt-db-list .mysql-apt-db-scroll td:nth-child(3) {
+		width: 180px;
+		min-width: 180px;
+		max-width: 180px;
+		box-sizing: border-box;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll th:nth-child(4),
+	.mysql-apt-db-list .mysql-apt-db-scroll td:nth-child(4),
+	.mysql-apt-db-list .mysql-apt-db-scroll th:nth-child(5),
+	.mysql-apt-db-list .mysql-apt-db-scroll td:nth-child(5) {
+		width: 140px;
+		min-width: 140px;
+		max-width: 140px;
+		box-sizing: border-box;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll th:nth-child(6),
+	.mysql-apt-db-list .mysql-apt-db-scroll td:nth-child(6) {
+		position: sticky;
+		right: 0;
+		min-width: 154px;
+		width: 154px;
+		box-sizing: border-box;
+		background-color: #fff;
+		box-shadow: -2px 0 3px rgba(0, 0, 0, 0.06);
+		z-index: 2;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll thead th:nth-child(6) {
+		z-index: 3;
+		background-color: #f6f6f6;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll thead th:nth-child(1),
+	.mysql-apt-db-list .mysql-apt-db-scroll thead th:nth-child(2) {
+		z-index: 3;
+		background-color: #f6f6f6;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll tbody td:nth-child(1),
+	.mysql-apt-db-list .mysql-apt-db-scroll tbody td:nth-child(2) {
+		z-index: 2;
+	}
+
+	.mysql-apt-db-list .mysql-apt-db-scroll .table-hover > tbody > tr:hover > td:nth-child(1),
+	.mysql-apt-db-list .mysql-apt-db-scroll .table-hover > tbody > tr:hover > td:nth-child(2),
+	.mysql-apt-db-list .mysql-apt-db-scroll .table-hover > tbody > tr:hover > td:nth-child(6) {
+		background-color: #f5f5f5;
+	}
 </style>
 <script type="text/javascript">
-	resetPluginWinWidth(800);
-	$.getScript("/plugins/file?name=mysql-apt&f=js/mysql-apt.js&v=202609041610", function () {
+	resetPluginWinWidth(1000);
+	$.getScript("/plugins/file?name=mysql-apt&f=js/mysql-apt.js&v=202609100003", function () {
 		pluginService('mysql-apt', $('.plugin_version').attr('version'));
 	});
 </script>
