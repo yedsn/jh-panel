@@ -1536,6 +1536,41 @@ def syncGetDatabases():
     return mw.returnJson(True, msg)
 
 
+def getMissingDatabases():
+    pdb = pMysqlDb()
+    database_rows = pdb.query('show databases')
+    is_error = isSqlError(database_rows)
+    if is_error is not None:
+        return is_error
+
+    existing_names = set([row['Database'] for row in database_rows])
+    local_databases = pSqliteDb('databases').field('id,name').select()
+    missing_databases = [
+        database for database in local_databases
+        if database['name'] not in existing_names
+    ]
+    return mw.returnJson(True, '检查完成', missing_databases)
+
+
+def cleanMissingDatabases():
+    pdb = pMysqlDb()
+    database_rows = pdb.query('show databases')
+    is_error = isSqlError(database_rows)
+    if is_error is not None:
+        return is_error
+
+    existing_names = set([row['Database'] for row in database_rows])
+    psdb = pSqliteDb('databases')
+    local_databases = psdb.field('id,name').select()
+    removed_names = []
+    for database in local_databases:
+        if database['name'] not in existing_names:
+            psdb.where('id=?', (database['id'],)).delete()
+            removed_names.append(database['name'])
+
+    return mw.returnJson(True, '已清理{0}个不存在的数据库记录!'.format(len(removed_names)), removed_names)
+
+
 def toDbBase(find):
     pdb = pMysqlDb()
     psdb = pSqliteDb('databases')
@@ -3785,6 +3820,10 @@ if __name__ == "__main__":
         print(syncGetDatabases())
     elif func == 'sync_to_databases':
         print(syncToDatabases())
+    elif func == 'get_missing_databases':
+        print(getMissingDatabases())
+    elif func == 'clean_missing_databases':
+        print(cleanMissingDatabases())
     elif func == 'set_root_pwd':
         print(setRootPwd(version))
     elif func == 'fix_root_pwd':

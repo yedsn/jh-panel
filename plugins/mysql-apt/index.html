@@ -77,6 +77,13 @@
 		margin-left: 5px;
 	}
 
+	.mysql-apt-missing-db-list {
+		max-height: 180px;
+		margin: 8px 0;
+		overflow-y: auto;
+		word-break: break-all;
+	}
+
 	/* Keep the database list frame in the plugin window and scroll its rows internally. */
 	.mysql-apt-db-list .mysql-apt-db-scroll {
 		height: min(420px, calc(100vh - 220px));
@@ -182,7 +189,7 @@
 </style>
 <script type="text/javascript">
 	resetPluginWinWidth(1100);
-	$.getScript("/plugins/file?name=mysql-apt&f=js/mysql-apt.js&v=202609100009", function () {
+	$.getScript("/plugins/file?name=mysql-apt&f=js/mysql-apt.js&v=202609100012", function () {
 		pluginService('mysql-apt', $('.plugin_version').attr('version'));
 	});
 </script>

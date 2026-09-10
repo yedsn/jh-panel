@@ -478,12 +478,57 @@ function syncToDatabase(type){
         if (!isNaN($(this).val())) data.push($(this).val());
     });
     var postData = 'type='+type+'&ids='+JSON.stringify(data); 
-    myPost('sync_to_databases', postData, function(data){
+    var syncDatabase = function(){
+        myPost('sync_to_databases', postData, function(data){
+            var rdata = $.parseJSON(data.data);
+            // console.log(rdata);
+            showMsg(rdata.msg,function(){
+                dbList();
+            },{ icon: rdata.status ? 1 : 2 });
+        });
+    };
+
+    if (type == 0) {
+        safeMessage(
+            '同步所有数据库',
+            '将按照面板本地数据库列表，尝试在当前 MySQL 中创建全部数据库并配置对应用户和访问权限。不会同步业务表结构或数据，确定继续吗？',
+            syncDatabase
+        );
+        return;
+    }
+
+    syncDatabase();
+}
+
+function cleanMissingDatabases(){
+    myPost('get_missing_databases', {}, function(data){
         var rdata = $.parseJSON(data.data);
-        // console.log(rdata);
-        showMsg(rdata.msg,function(){
-            dbList();
-        },{ icon: rdata.status ? 1 : 2 });
+        if (!rdata.status) {
+            layer.msg(rdata.msg, {icon: 2});
+            return;
+        }
+
+        var missingDatabases = rdata.data || [];
+        if (!missingDatabases.length) {
+            layer.msg('当前列表中的数据库均存在，无需清理。', {icon: 1});
+            return;
+        }
+
+        var databaseNames = missingDatabases.map(function(database){
+            return '<li>' + escapeHTML(database.name) + '</li>';
+        }).join('');
+        safeMessage(
+            '确认清理不存在数据库',
+            '以下 <b>' + missingDatabases.length + '</b> 个数据库在当前 MySQL 中不存在：<ul class="mysql-apt-missing-db-list">' + databaseNames + '</ul>确认后将删除上述面板本地记录。',
+            function(){
+                myPost('clean_missing_databases', {}, function(cleanData){
+                    var cleanResult = $.parseJSON(cleanData.data);
+                    showMsg(cleanResult.msg, function(){
+                        dbList();
+                    }, {icon: cleanResult.status ? 1 : 2});
+                });
+            }
+        );
     });
 }
 
@@ -1302,6 +1347,7 @@ function dbList(page, search){
                         <span class="sync btn btn-default btn-sm" onclick="syncToDatabase(1)" title="将选中数据库信息同步到服务器">同步选中</span>\
                         <span class="sync btn btn-default btn-sm" onclick="syncToDatabase(0)" title="将所有数据库信息同步到服务器">同步所有</span>\
                         <span class="sync btn btn-default btn-sm" onclick="syncGetDatabase()" title="从服务器获取数据库列表">从服务器获取</span>\
+                        <span class="sync btn btn-default btn-sm" onclick="cleanMissingDatabases()" title="清理面板列表中当前 MySQL 不存在的数据库记录">清理不存在数据库</span>\
                     </div>\
                 </div>\
             </div>\
