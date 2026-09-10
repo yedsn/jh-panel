@@ -628,11 +628,23 @@ function copyPass(password){
 }
 
 function checkSelect(){
-    $('#DataBody').find('tr').each(function(i,obj){
-        var fin = $(this).find('td')[0];
-        checked = $(fin).find('input').prop('checked');
-        $(fin).find('input').prop('checked',!checked);
+    var checked = $('#DataBody thead input.check').prop('checked');
+    $('#DataBody tbody input.check').prop('checked', checked);
+    updateDbBatchDeleteButton();
+}
+
+function updateDbBatchDeleteButton(){
+    var selectedCount = $('#DataBody tbody input.check:checked').length;
+    $('button[batch="true"]').toggle(selectedCount > 1);
+}
+
+function bindDbListSelection(){
+    $('#DataBody tbody').off('change.mysqlAptDbList', 'input.check').on('change.mysqlAptDbList', 'input.check', function(){
+        var $checkboxes = $('#DataBody tbody input.check');
+        $('#DataBody thead input.check').prop('checked', $checkboxes.length > 0 && $checkboxes.length == $checkboxes.filter(':checked').length);
+        updateDbBatchDeleteButton();
     });
+    updateDbBatchDeleteButton();
 }
 
 function setDbRw(id,username,val){
@@ -881,7 +893,7 @@ function delDb(id, name){
 
 function delDbBatch(){
     var arr = [];
-    $('input[type="checkbox"].check:checked').each(function () {
+    $('#DataBody tbody input.check:checked').each(function () {
         var _val = $(this).val();
         var _name = $(this).parent().next().text();
         if (!isNaN(_val)) {
@@ -889,7 +901,16 @@ function delDbBatch(){
         }
     });
 
-    safeMessage('批量删除数据库','<a style="color:red;">您共选择了[2]个数据库,删除后将无法恢复,真的要删除吗?</a>',function(){
+    if (!arr.length) {
+        layer.msg('请先选择要删除的数据库。', {icon: 2});
+        return;
+    }
+
+    var databaseNames = '';
+    for (var i = 0; i < arr.length; i++) {
+        databaseNames += '<li>' + escapeHTML(arr[i].name) + '</li>';
+    }
+    safeMessage('确认批量删除数据库', '将删除以下 <b>' + arr.length + '</b> 个数据库及其关联用户、面板记录：<ul class="mysql-apt-missing-db-list">' + databaseNames + '</ul>删除后无法恢复，确定继续吗？', function(){
         var i = 0;
         $(arr).each(function(){
             var data  = myAsyncPost('del_db', this);
@@ -1307,7 +1328,7 @@ function dbList(page, search){
         if ($('#mysql-apt-db-search-input').length) {
             $('#DataBody tbody').html(list);
             $('.databases-count').text(rdata.data.length);
-            readerTableChecked();
+            bindDbListSelection();
             if (keepSearchFocus) $('#mysql-apt-db-search-input').focus();
             return;
         }
@@ -1324,7 +1345,7 @@ function dbList(page, search){
                 <input id="mysql-apt-db-search-input" class="bt-input-text" type="text" value="'+searchValue+'" placeholder="搜索数据库名" title="按数据库名称搜索">\
             </span>\
             <span style="float:right">              \
-                <button batch="true" style="float: right;display: none;margin-left:10px;" onclick="delDbBatch();" title="删除选中项" class="btn btn-default btn-sm">删除选中</button>\
+                <button batch="true" style="float: right;display: none;margin-left:10px;" onclick="delDbBatch();" title="批量删除选中的数据库" class="btn btn-default btn-sm">批量删除</button>\
             </span>\
             <div class="divtable mtb10">\
                 <div class="tablescroll mysql-apt-db-scroll">\
@@ -1373,7 +1394,7 @@ function dbList(page, search){
             }, 300);
         });
 
-        readerTableChecked();
+        bindDbListSelection();
     });
 }
 
