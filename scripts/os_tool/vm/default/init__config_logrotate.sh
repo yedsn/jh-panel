@@ -22,6 +22,8 @@ echo "开始写入logrotate配置..."
 cat > "${LOGROTATE_CONFIG}" <<'EOF'
 /var/log/syslog
 /var/log/daemon.log
+/var/log/messages
+/var/log/user.log
 /var/log/filebeat/filebeat
 /var/log/filebeat/*.log
 {
