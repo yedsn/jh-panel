@@ -123,6 +123,22 @@ def deleteOne(table, id):
         session.write()
 
 
+def deleteMany(table, ids):
+    deleted = []
+    missing = []
+    with getDb(table).session() as (session, db):
+        for item_id in ids:
+            item_id = str(item_id)
+            if item_id not in db:
+                missing.append(item_id)
+                continue
+            del db[item_id]
+            deleted.append(item_id)
+        if deleted:
+            session.write()
+    return deleted, missing
+
+
 def _parseBatchIds(raw_ids):
     if isinstance(raw_ids, list):
         values = raw_ids
@@ -541,6 +557,27 @@ def mountDelete():
     deleteOne('mount', id)
     return mw.returnJson(True, '删除成功!')
 
+
+def mountBatchDelete():
+    args = getArgs()
+    data = checkArgs(args, ['ids'])
+    if not data[0]:
+        return data[1]
+    ids = _parseBatchIds(args.get('ids'))
+    if not ids:
+        return mw.returnJson(False, '请至少选择一个挂载项!')
+
+    deleted, missing = deleteMany('mount', ids)
+    result = {
+        'deleted': deleted,
+        'missing': missing,
+    }
+    return mw.returnJson(
+        True,
+        '处理完成：删除%d项，跳过%d项' % (len(deleted), len(missing)),
+        result,
+    )
+
 def getMountScript():
     args = getArgs()
     data = checkArgs(args, ['id'])
@@ -646,6 +683,8 @@ if __name__ == "__main__":
         print(mountEdit())
     elif func == 'mount_delete':
         print(mountDelete())
+    elif func == 'mount_batch_delete':
+        print(mountBatchDelete())
     elif func == 'get_mount_script':
         print(getMountScript())
     elif func == 'get_unmount_script':

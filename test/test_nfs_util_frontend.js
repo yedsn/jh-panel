@@ -11,6 +11,7 @@ const state = {
   ],
   selectAll: { checked: false, indeterminate: false },
   batchVisible: false,
+  safeMessage: null,
 };
 
 function selection(items) {
@@ -65,6 +66,9 @@ const context = {
   encodeURIComponent,
   setTimeout: (callback) => callback(),
   layer: { msg() {}, confirm() {}, close() {}, open() {} },
+  safeMessage(title, message, callback) {
+    state.safeMessage = { title, message, callback };
+  },
   document: {},
 };
 vm.createContext(context);
@@ -116,5 +120,41 @@ const structuredResponse = context.parsePluginResponse({
 assert.strictEqual(structuredResponse.status, false);
 assert.strictEqual(structuredResponse.msg, 'invalid action');
 
-assert.strictEqual(fs.readFileSync(scriptPath, 'utf8').includes('批量删除'), false);
+const source = fs.readFileSync(scriptPath, 'utf8');
+assert.strictEqual(source.includes('批量删除'), true);
+
+state.rows[0].checked = true;
+state.rows[1].checked = true;
+context.syncSelectionState();
+context.tableData = [
+  { id: '1', name: '<危险名称>' },
+  { id: '2', name: '普通挂载' },
+];
+let deleteRequests = 0;
+let refreshCount = 0;
+context.requestApi = (method, args, callback) => {
+  deleteRequests += 1;
+  assert.strictEqual(method, 'mount_batch_delete');
+  assert.strictEqual(args.ids, '1,2');
+  callback({
+    status: true,
+    data: JSON.stringify({
+      status: true,
+      msg: '处理完成：删除2项，跳过0项',
+      data: { deleted: ['1', '2'], missing: [] },
+    }),
+  });
+};
+context.refreshTable = () => { refreshCount += 1; };
+context.deleteBatch();
+assert.strictEqual(deleteRequests, 0);
+assert.strictEqual(state.safeMessage.title, '确认批量删除挂载记录');
+assert.strictEqual(state.safeMessage.message.includes('&lt;危险名称&gt;'), true);
+assert.strictEqual(state.safeMessage.message.includes('不会卸载现有挂载'), true);
+assert.strictEqual(state.safeMessage.message.includes('不会清理自动挂载配置'), true);
+
+state.safeMessage.callback();
+assert.strictEqual(deleteRequests, 1);
+assert.strictEqual(refreshCount, 1);
+assert.deepStrictEqual(Array.from(context.checkedIds), []);
 console.log('ok');

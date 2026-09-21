@@ -21,6 +21,7 @@ function refreshTable() {
             <button class="btn btn-default btn-sm va0" data-nfs-batch style="display:none;" onclick="unmountBatch();">批量卸载</button>\
             <button class="btn btn-default btn-sm va0" data-nfs-batch style="display:none;" onclick="enableAutostartBatch();">批量开启自动挂载</button>\
             <button class="btn btn-default btn-sm va0" data-nfs-batch style="display:none;" onclick="disableAutostartBatch();">批量取消自动挂载</button>\
+            <button class="btn btn-danger btn-sm va0" data-nfs-batch style="display:none;" onclick="deleteBatch();">批量删除</button>\
         </div>\
         <table class="table table-hover" style="margin-top: 10px; max-height: 380px; overflow: auto;">\
             <thead><tr>\
@@ -276,6 +277,45 @@ function deleteItem(id, name) {
         	var rdata = $.parseJSON(data.data);
 	        layer.msg(rdata.msg,{icon:rdata.status?1:2});
 	        refreshTable();
+        });
+    });
+}
+
+function nfsEscapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function deleteBatch() {
+    if (!ensureBatchSelection()) {
+        return;
+    }
+
+    var selectedSet = new Set(checkedIds.map(String));
+    var selectedItems = tableData.filter(function(item) {
+        return selectedSet.has(String(item.id));
+    });
+    var nameList = selectedItems.map(function(item) {
+        return '<li>' + nfsEscapeHtml(item.name || item.id) + '</li>';
+    }).join('');
+    var message = '将从管理列表删除以下 <b>' + checkedIds.length + '</b> 个挂载记录：' +
+        '<ul style="max-height:180px;overflow:auto;margin:8px 0 8px 20px;">' + nameList + '</ul>' +
+        '<span style="color:red;">该操作不会卸载现有挂载、不会清理自动挂载配置，也不会删除本地目录或远端数据。</span>';
+
+    safeMessage('确认批量删除挂载记录', message, function() {
+        requestApi('mount_batch_delete', {ids: checkedIds.join(',')}, function(response) {
+            var result = parsePluginResponse(response);
+            var data = result.data || {};
+            var deleted = (data.deleted || []).map(String);
+            var missing = (data.missing || []).map(String);
+            var removed = new Set(deleted.concat(missing));
+            checkedIds = checkedIds.filter(function(id) { return !removed.has(String(id)); });
+            layer.msg(result.msg, {icon: result.status ? 1 : 2});
+            refreshTable();
         });
     });
 }

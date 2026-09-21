@@ -168,6 +168,47 @@ def test_nfs_util_batch_operations():
         assert delete_result['status'] is True
         assert deleted_ids[-1] == ('mount', added['id'])
 
+        batch_delete_db = {
+            '1': dict(mount_a),
+            '2': dict(mount_b),
+        }
+        batch_delete_writes = []
+
+        class BatchDeleteSession:
+            def __enter__(self):
+                return self, batch_delete_db
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def write(self):
+                batch_delete_writes.append(True)
+
+        class BatchDeleteDb:
+            def session(self):
+                return BatchDeleteSession()
+
+        module.getDb = lambda table: BatchDeleteDb()
+        deleted, missing = module.deleteMany('mount', ['1', 'missing', '2'])
+        assert deleted == ['1', '2']
+        assert missing == ['missing']
+        assert batch_delete_writes == [True]
+        assert batch_delete_db == {}
+
+        batch_delete_db['1'] = dict(mount_a)
+        batch_delete_writes.clear()
+        module.getArgs = lambda: {'ids': '1,1,missing'}
+        batch_delete_result = module.mountBatchDelete()
+        assert batch_delete_result['status'] is True
+        assert batch_delete_result['data'] == {'deleted': ['1'], 'missing': ['missing']}
+        assert batch_delete_writes == [True]
+        assert batch_delete_db == {}
+
+        module.getArgs = lambda: {'ids': ',,'}
+        empty_batch_delete = module.mountBatchDelete()
+        assert empty_batch_delete['status'] is False
+        assert batch_delete_writes == [True]
+
         mounted = {
             '/mnt/a': {'source': '10.0.0.1:/srv/a', 'fstype': 'nfs4'},
             '/mnt/conflict': {'source': '/dev/sdb1', 'fstype': 'ext4'},
