@@ -485,6 +485,24 @@ function lsyncdRun(name){
     });
 }
 
+function lsyncdForceRun(name){
+    var warning = '<span style="color:#d9534f;">强制同步将跳过源/目标挂载检查和待删除文件比例预检。</span><br><br>' +
+        '任务：[' + name + ']<br>' +
+        '如果任务为完全同步，目标端多余文件可能被直接删除。请确认源目录、目标目录和任务配置均正确。<br><br>' +
+        '确认强制执行，请完成下方计算题：';
+
+    safeMessage('强制同步风险确认', warning, function(){
+        var args = {};
+        args["name"] = name;
+        args["force"] = true;
+        rsPost('lsyncd_run', args, function(data) {
+            let rdata = $.parseJSON(data.data);
+            layer.msg(rdata.msg,{icon:rdata.status?1:2});
+            messageBox({timeout: 300, autoClose: true, toLogAfterComplete: true});
+        }, '正在添加强制同步任务...');
+    });
+}
+
 function lsyncdLog(name, realtime){
     // var args = {};
     // args["name"] = name;
@@ -818,6 +836,7 @@ function lsyncdSend(){
                 '<td>' + period +'</td>' +
                 '<td>\
                     <a class="btlink" onclick="lsyncdRun(\''+list[i]['name']+'\')">同步</a>\
+                    | <a class="btlink" style="color:#d9534f;" title="跳过同步前预检并立即执行" onclick="lsyncdForceRun(\''+list[i]['name']+'\')">强制同步</a>\
                     | <a class="btlink" onclick="lsyncdLog(\''+list[i]['name']+'\', \''+list[i]['realtime']+'\')">日志</a>\
                     | <a class="btlink" onclick="lsyncdExclude(\''+list[i]['name']+'\')">过滤器</a>\
                     | <a class="btlink" onclick="createSendTask(\''+list[i]['name']+'\')">编辑</a>\

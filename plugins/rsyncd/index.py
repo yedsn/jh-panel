@@ -16,6 +16,7 @@ sys.path.append(os.getcwd() + "/class/core")
 sys.path.append(os.getcwd() + "/class/plugin")
 import mw
 from debounce_tool import set_debounce_command
+from value_tool import safeBool
 
 app_debug = False
 if mw.isAppleSystem():
@@ -1108,16 +1109,21 @@ def lsyncdRun():
         return data[1]
 
     name = args['name']
+    force = safeBool(args.get('force'), False)
     send_dir = getServerDir() + "/send/" + name
     timestamp = '$(date +%Y%m%d_%H%M%S)'
+    force_arg = ' -f' if force else ''
+    force_env = 'RSYNCD_SKIP_MOUNT_CHECK=1 ' if force else ''
+    task_prefix = '强制执行' if force else '执行'
 
     mw.addAndTriggerTask(
-        name = '执行rsyncd同步任务[' + name + ']',
-        execstr = "bash %(send_dir)s/cmd | tee -a %(send_dir)s/logs/run_%(timestamp)s.log" % {
-              'send_dir': send_dir, 'timestamp': timestamp
+        name = task_prefix + 'rsyncd同步任务[' + name + ']',
+        execstr = "%(force_env)sbash %(send_dir)s/cmd%(force_arg)s | tee -a %(send_dir)s/logs/run_%(timestamp)s.log" % {
+              'force_env': force_env, 'send_dir': send_dir, 'force_arg': force_arg, 'timestamp': timestamp
             }
     )
-    return mw.returnJson(True, '添加执行任务成功!')
+    message = '添加强制同步任务成功!' if force else '添加执行任务成功!'
+    return mw.returnJson(True, message)
 
 def lsyncdRealtimeAllRun():
     data = getDefaultConf()
