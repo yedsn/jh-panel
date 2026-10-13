@@ -2531,11 +2531,24 @@ def getMasterRepSlaveUserCmd(version):
         clist = psdb.field(f).where("username=?", (username,)).limit(
             '1').order('id desc').select()
 
+    if isinstance(clist, Exception):
+        return mw.returnJson(False, '读取同步账户失败: ' + str(clist))
+    if not isinstance(clist, (list, tuple)):
+        return mw.returnJson(False, '读取同步账户失败: 返回数据格式异常')
+    if not clist:
+        return mw.returnJson(False, '未找到同步账户，请先添加或重新选择同步账户!')
+
     ip = mw.getLocalIp()
     port = getMyPort()
-    db = pMysqlDb()
-
-    mstatus = db.query('show master status')
+    try:
+        db = pMysqlDb()
+        mstatus = db.query('show master status')
+        if isinstance(mstatus, Exception):
+            raise mstatus
+    except Exception as e:
+        return mw.returnJson(False, '读取主库状态失败: ' + str(e))
+    if not isinstance(mstatus, (list, tuple)):
+        return mw.returnJson(False, '读取主库状态失败: 返回数据格式异常')
     if len(mstatus) == 0:
         return mw.returnJson(False, '未开启binlog日志!')
 
@@ -2888,11 +2901,20 @@ def initSlaveStatus(version=''):
     log_pos = args.get('log_pos', '')
     gtid_purged = args.get('gtid_purged', '')
     
-    db = pMysqlDb()
+    def query(sql):
+        # ORM.query 返回异常对象而不是抛出异常，必须在继续初始化前检查。
+        result = db.query(sql)
+        if isinstance(result, Exception):
+            raise result
+        if not isinstance(result, (list, tuple)):
+            raise RuntimeError('MySQL返回数据格式异常: ' + type(result).__name__)
+        return result
+
     try:
-      dlist = db.query('show slave status')
-      if len(dlist) > 0:
-        return mw.returnJson(False, '已经初始化好了zz...')
+        db = pMysqlDb()
+        dlist = query('show slave status')
+        if len(dlist) > 0:
+            return mw.returnJson(False, '已经初始化好了zz...')
     except Exception as e:
         return formatInitSlaveError('读取本机从库状态异常', e)
 
@@ -2954,7 +2976,7 @@ def initSlaveStatus(version=''):
         ps = u['username'] + "|" + u['password']
         conn.where('ip=?', (ip,)).setField('ps', ps)
         step = '停止本机Slave'
-        db.query('stop slave')
+        query('stop slave')
 
         # 保证同步IP一致
         cmd = cmd_data['data']['cmd']
@@ -2977,20 +2999,20 @@ def initSlaveStatus(version=''):
             # print(gtid_purged)
             # 使用 reset master 清空 GTID_EXECUTED，否则 gtid_purged 设置会报错
             step = '重置本机GTID'
-            db.query("RESET MASTER")
-            db.query("RESET SLAVE ALL")
-            db.query("SET GLOBAL gtid_purged='" + gtid_purged + "'")
+            query("RESET MASTER")
+            query("RESET SLAVE ALL")
+            query("SET GLOBAL gtid_purged='" + gtid_purged + "'")
         # print('cmd', cmd)
         step = '设置本机主从同步命令'
-        db.query(cmd)
+        query(cmd)
         step = '启动本机Slave'
-        db.query("start slave user='{}' password='{}';".format(
+        query("start slave user='{}' password='{}';".format(
             u['username'], u['password']))
         
         # 开始只读
         step = '开启本机只读模式'
-        db.query('SET GLOBAL read_only = on')
-        db.query('SET GLOBAL super_read_only = on')
+        query('SET GLOBAL read_only = on')
+        query('SET GLOBAL super_read_only = on')
         mw.execShell(f'source {getPluginDir()}/readonly.sh && enable_readonly')
 
     except Exception as e:
