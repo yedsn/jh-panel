@@ -24,13 +24,14 @@ fi
 show_menu() {
     echo "==================vm os-tools=================="
     echo "请选择状态监测工具:"
-    echo "1. PS进程占用分析（打印进程信息到CVS文件）"
-    echo "2. TOP进程占用分析（每秒打印进程占用排名到TXT文件）"
-    echo "3. 磁盘IO占用分析（打印磁盘IO占用排名到文件）"
-    echo "4. 磁盘IO测试（测试磁盘读写速度）"
-    echo "5. MySQL数据库Checksum分析（打印单个MySQL数据库所有表的cheksum值）"
-    echo "6. MySQL数据库Checksum分析（主备MySQL数据库cheksum值对比）"
-    echo "7. 空间占用分析（打印当前目录下所有文件和文件夹的大小）"
+    echo "1. 服务器资源分析报告"
+    echo "2. PS进程占用分析（打印进程信息到CVS文件）"
+    echo "3. TOP进程占用分析（每秒打印进程占用排名到TXT文件）"
+    echo "4. 磁盘IO占用分析（打印磁盘IO占用排名到文件）"
+    echo "5. 磁盘IO测试（测试磁盘读写速度）"
+    echo "6. MySQL数据库Checksum分析（打印单个MySQL数据库所有表的cheksum值）"
+    echo "7. MySQL数据库Checksum分析（主备MySQL数据库cheksum值对比）"
+    echo "8. 空间占用分析（打印当前目录下所有文件和文件夹的大小）"
     echo "========================================================"
 }
 
@@ -44,24 +45,27 @@ choice=${choice:-"1"}
 # 根据用户的选择执行对应的操作
 case $choice in
 1)
-    download_and_run monitor__export_processes.sh
+    download_and_run_py monitor__server_resource_report.py
     ;;
 2)
-    download_and_run monitor__export_top_rank.sh
+    download_and_run monitor__export_processes.sh
     ;;
 3)
-    download_and_run monitor__export_iotop_rank.sh
+    download_and_run monitor__export_top_rank.sh
     ;;
 4)
-    download_and_run monitor__export_io_test.sh
+    download_and_run monitor__export_iotop_rank.sh
     ;;
 5)
-    download_and_run_node monitor__export_mysql_checksum.js
+    download_and_run monitor__export_io_test.sh
     ;;
 6)
-    download_and_run_node monitor__export_mysql_checksum_compare.js
+    download_and_run_node monitor__export_mysql_checksum.js
     ;;
 7)
+    download_and_run_node monitor__export_mysql_checksum_compare.js
+    ;;
+8)
     download_and_run monitor__export_diretory_size.sh
     ;;
 esac
