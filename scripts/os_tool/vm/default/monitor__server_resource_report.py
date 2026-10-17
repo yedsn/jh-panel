@@ -44,8 +44,11 @@ MODULES = OrderedDict(
         ("9", ("speedtest", "外网速度测试（主动负载）", True)),
     ]
 )
-DEFAULT_MODULE_KEYS = ["cpu", "memory"]
+DEFAULT_MODULE_KEYS = ["system", "cpu", "memory", "disk_space"]
 MODULE_BY_KEY = {value[0]: (number, value[1], value[2]) for number, value in MODULES.items()}
+
+SEVERITY_LABELS = OrderedDict([("critical", "严重"), ("warning", "警告"), ("info", "提示")])
+SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
 DIALOG_PACKAGE = "dialog"
 
@@ -1759,6 +1762,119 @@ def analyze_report(report: Dict[str, Any], args: argparse.Namespace) -> List[Dic
     return sorted(issues, key=lambda item: severity_order.get(item["severity"], 9))
 
 
+def severity_label(severity: str) -> str:
+    return SEVERITY_LABELS.get(severity, severity)
+
+
+def module_label(key: str) -> str:
+    return MODULE_BY_KEY.get(key, ("", key, False))[1]
+
+
+def build_summary(report: Dict[str, Any]) -> Dict[str, Any]:
+    """汇总异常风险和采集降级信息，供报告顶部的概要信息使用。"""
+    items: List[Dict[str, str]] = []
+    dependencies = report.get("dependencies", {})
+    failed_tools = [item for item in dependencies.get("tools", []) if item.get("status") == "failed"]
+
+    for issue in report.get("issues", []):
+        if issue.get("severity") not in ("critical", "warning"):
+            continue
+        items.append(
+            {
+                "severity": issue["severity"],
+                "module": issue.get("module", ""),
+                "text": (
+                    f"{module_label(issue.get('module', ''))}：{issue['metric']} {issue['value']}"
+                    f"（依据：{issue['basis']}；窗口：{issue['window']}）"
+                ),
+            }
+        )
+
+    status_labels = {
+        "failed": ("critical", "采集失败"),
+        "incomplete": ("warning", "采集不完整"),
+        "unknown": ("warning", "部分指标不可用"),
+        "skipped": ("info", "未执行"),
+    }
+    for key, value in report.get("modules", {}).items():
+        status = value.get("status")
+        if status not in status_labels:
+            continue
+        severity, label = status_labels[status]
+        detail = value.get("error") or label
+        items.append({"severity": severity, "module": key, "text": f"{module_label(key)}：{label}（{detail}）"})
+
+    disk_io = report.get("modules", {}).get("disk_io", {})
+    if disk_io.get("enhanced_error") and not failed_tools:
+        items.append(
+            {
+                "severity": "warning",
+                "module": "disk_io",
+                "text": f"{module_label('disk_io')}：增强指标不可用（{disk_io['enhanced_error']}）",
+            }
+        )
+
+    disk_space = report.get("modules", {}).get("disk_space", {})
+    for task in disk_space.get("scan_tasks", []):
+        if task.get("status") == "ok":
+            continue
+        items.append(
+            {
+                "severity": "warning",
+                "module": "disk_space",
+                "text": (
+                    f"目录扫描未完成：{task.get('root')}"
+                    f"（{task.get('status')}，耗时 {task.get('duration_seconds')}s）"
+                ),
+            }
+        )
+
+    for key, value in report.get("modules", {}).items():
+        if value.get("residual_file"):
+            items.append(
+                {
+                    "severity": "warning",
+                    "module": key,
+                    "text": f"{module_label(key)}：发现需要人工清理的残留文件 {value['residual_file']}",
+                }
+            )
+
+    for item in failed_tools:
+        items.append(
+            {
+                "severity": "warning",
+                "module": "dependencies",
+                "text": (
+                    f"依赖工具 {item['command']}（{item['package']}）安装后仍不可用，"
+                    f"请手动执行：{item['manual_install_command']}"
+                ),
+            }
+        )
+
+    metadata = report.get("metadata", {})
+    if metadata.get("output_fallback_reason"):
+        items.append(
+            {
+                "severity": "info",
+                "module": "output",
+                "text": (
+                    f"报告输出目录已回退到 {metadata.get('output_dir')}"
+                    f"（{metadata['output_fallback_reason']}）"
+                ),
+            }
+        )
+
+    items.sort(key=lambda item: SEVERITY_ORDER.get(item["severity"], 9))
+    counts = {severity: sum(1 for item in items if item["severity"] == severity) for severity in SEVERITY_ORDER}
+    risk_count = counts["critical"] + counts["warning"]
+    return {
+        "status": "risk" if risk_count else "ok",
+        "counts": counts,
+        "items": items,
+        "conclusion": None if risk_count else "服务运行正常，继续保持！",
+    }
+
+
 def section_status_summary(report: Dict[str, Any]) -> Tuple[List[str], List[str], List[str]]:
     completed: List[str] = []
     skipped: List[str] = []
@@ -1795,12 +1911,20 @@ def render_text(report: Dict[str, Any]) -> str:
         f"跳过模块：{', '.join(skipped) or '无'}",
         f"失败模块：{', '.join(failed) or '无'}",
         "",
-        "【分析结论】",
+        "【概要信息】",
     ]
+    summary = report.get("summary") or build_summary(report)
+    if summary.get("items"):
+        lines.append(f"风险统计：严重 {summary['counts']['critical']}，警告 {summary['counts']['warning']}，提示 {summary['counts']['info']}")
+        for item in summary["items"]:
+            lines.append(f"- 【{severity_label(item['severity'])}】{item['text']}")
+    else:
+        lines.append(f"- {summary.get('conclusion') or '服务运行正常，继续保持！'}")
+    lines.extend(["", "【分析结论】"])
     if not issues:
         lines.append("本次采样期间未发现达到已配置阈值的问题。")
     for index, issue in enumerate(issues, 1):
-        severity = {"critical": "严重", "warning": "警告", "info": "提示"}.get(issue["severity"], issue["severity"])
+        severity = severity_label(issue["severity"])
         lines.extend(
             [
                 f"{index}. [{severity}] {issue['message']}",
@@ -1941,10 +2065,19 @@ def render_text(report: Dict[str, Any]) -> str:
 def render_html(report: Dict[str, Any], text_report: Optional[str] = None) -> str:
     metadata = report["metadata"]
     issues = report.get("issues", [])
-    severity_labels = {"critical": "严重", "warning": "警告", "info": "提示"}
+    summary = report.get("summary") or build_summary(report)
+    summary_items = "".join(
+        f"<li class='{html.escape(item['severity'])}'>【{severity_label(item['severity'])}】{html.escape(item['text'])}</li>"
+        for item in summary.get("items", [])
+    ) or f"<li class='ok'>{html.escape(summary.get('conclusion') or '服务运行正常，继续保持！')}</li>"
+    summary_counts = (
+        f"<p class='muted'>严重 {summary['counts']['critical']} · 警告 {summary['counts']['warning']} · 提示 {summary['counts']['info']}</p>"
+        if summary.get("items")
+        else ""
+    )
     issue_rows = "".join(
         "<tr>"
-        f"<td><span class='badge {html.escape(issue['severity'])}'>{severity_labels.get(issue['severity'], issue['severity'])}</span></td>"
+        f"<td><span class='badge {html.escape(issue['severity'])}'>{severity_label(issue['severity'])}</span></td>"
         f"<td>{html.escape(issue['module'])}</td>"
         f"<td>{html.escape(issue['message'])}</td>"
         f"<td>{html.escape(issue['basis'])}</td>"
@@ -1981,8 +2114,10 @@ section{{background:#fff;border-radius:10px;padding:20px;margin:18px 0;box-shado
 table{{width:100%;border-collapse:collapse}}th,td{{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top}}
 pre{{white-space:pre-wrap;word-break:break-word;background:#111827;color:#e5e7eb;padding:16px;border-radius:8px;overflow:auto}}
 .badge{{padding:3px 8px;border-radius:999px;color:#fff}}.critical{{background:#dc2626}}.warning{{background:#d97706}}.info{{background:#2563eb}}
+.summary{{list-style:disc;margin:8px 0 0 20px;padding:0}}.summary li{{margin:6px 0}}.summary li.critical{{color:#b91c1c}}.summary li.warning{{color:#b45309}}.summary li.info{{color:#1d4ed8}}.summary li.ok{{color:#15803d;font-weight:600}}
 </style></head><body><main>
 <h1>服务器资源分析报告</h1><p class="muted">{html.escape(metadata.get('hostname', 'unknown'))} · {html.escape(metadata.get('started_at', ''))} ~ {html.escape(metadata.get('finished_at', ''))}</p>
+<section><h2>概要信息</h2>{summary_counts}<ul class="summary">{summary_items}</ul></section>
 <section><h2>分析结论</h2><table><thead><tr><th>级别</th><th>模块</th><th>观察</th><th>依据</th><th>建议</th></tr></thead><tbody>{issue_rows}</tbody></table></section>
 <section><h2>依赖工具</h2><p class="muted">包管理器：{html.escape(report.get('dependencies', {}).get('package_manager', 'unknown'))}</p><table><thead><tr><th>工具</th><th>状态</th><th>软件包</th><th>模块</th><th>错误</th><th>手动安装</th></tr></thead><tbody>{dependency_rows}</tbody></table></section>
 {''.join(module_cards)}
@@ -2179,6 +2314,13 @@ def print_final_summary(report: Dict[str, Any], paths: Dict[str, str], output_er
     show_info(f"|- 跳过模块：{', '.join(skipped) or '无'}")
     show_info(f"|- 失败模块：{', '.join(failed) or '无'}")
     show_info(f"|- 问题数量：严重 {sum(1 for i in report['issues'] if i['severity'] == 'critical')}，警告 {sum(1 for i in report['issues'] if i['severity'] == 'warning')}，提示 {sum(1 for i in report['issues'] if i['severity'] == 'info')}")
+    summary = report.get("summary") or build_summary(report)
+    if summary.get("items"):
+        show_info("|- 概要信息：")
+        for item in summary["items"]:
+            show_info(f"   - 【{severity_label(item['severity'])}】{item['text']}")
+    else:
+        show_info(f"|- 概要信息：{summary.get('conclusion') or '服务运行正常，继续保持！'}")
     dependency_failed = [item for item in report.get("dependencies", {}).get("tools", []) if item.get("status") == "failed"]
     show_info(f"|- 依赖工具：失败 {len(dependency_failed)} 项")
     for item in dependency_failed:
@@ -2229,6 +2371,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     report = build_report(args, selected, skipped, dependencies)
     report["metadata"]["output_dir"] = output_dir
     report["metadata"]["output_fallback_reason"] = output_reason
+    report["summary"] = build_summary(report)
     try:
         paths, output_errors = save_reports(report, output_dir)
     except OSError as exc:

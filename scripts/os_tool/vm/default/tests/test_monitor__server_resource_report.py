@@ -32,7 +32,7 @@ def mount(source, target, fstype, category=None):
 class ModuleSelectionTests(unittest.TestCase):
     def test_default_and_custom_modules(self):
         self.assertEqual(REPORT.parse_modules(None), REPORT.DEFAULT_MODULE_KEYS)
-        self.assertEqual(REPORT.DEFAULT_MODULE_KEYS, ["cpu", "memory"])
+        self.assertEqual(REPORT.DEFAULT_MODULE_KEYS, ["system", "cpu", "memory", "disk_space"])
         self.assertEqual(REPORT.parse_modules("1,cpu,9"), ["system", "cpu", "speedtest"])
         self.assertEqual(len(REPORT.parse_modules("all")), len(REPORT.MODULES))
 
@@ -67,12 +67,11 @@ class InteractiveSelectionTests(unittest.TestCase):
         index = command.index("--checklist")
         return command[index + 5 :]
 
-    def test_dialog_checklist_defaults_to_cpu_and_memory(self):
+    def test_dialog_checklist_defaults_to_first_four_modules(self):
         options = self.checklist_options(REPORT.build_dialog_checklist_command())
         states = {options[i]: options[i + 2] for i in range(0, len(options), 3)}
-        self.assertEqual(states["2"], "on")
-        self.assertEqual(states["3"], "on")
-        self.assertTrue(all(states[tag] == "off" for tag in states if tag not in ("2", "3")))
+        self.assertEqual([tag for tag in states if states[tag] == "on"], ["1", "2", "3", "4"])
+        self.assertTrue(all(states[tag] == "off" for tag in states if tag not in ("1", "2", "3", "4")))
 
     def test_dialog_selection_maps_tags_in_module_order(self):
         with mock.patch.object(REPORT, "run_dialog", return_value=(0, "3\n1\n")):
@@ -93,8 +92,8 @@ class InteractiveSelectionTests(unittest.TestCase):
         with mock.patch.object(REPORT, "ensure_dialog", return_value=True), mock.patch.object(
             REPORT, "dialog_module_selection", return_value=None
         ), mock.patch.object(REPORT, "prompt", return_value="") as prompt:
-            self.assertEqual(REPORT.interactive_module_selection(), ["cpu", "memory"])
-        self.assertIn("默认2,3", prompt.call_args[0][0])
+            self.assertEqual(REPORT.interactive_module_selection(), ["system", "cpu", "memory", "disk_space"])
+        self.assertIn("默认1,2,3,4", prompt.call_args[0][0])
 
     def test_interactive_selection_uses_dialog_result(self):
         with mock.patch.object(REPORT, "ensure_dialog", return_value=True), mock.patch.object(
@@ -495,6 +494,131 @@ class AnalysisAndOutputTests(unittest.TestCase):
             report = REPORT.build_report(args, ["system", "memory"], {}, {"status": "ok", "tools": []})
         self.assertEqual(report["modules"]["system"]["status"], "failed")
         self.assertEqual(report["modules"]["memory"]["status"], "ok")
+
+
+class SummaryTests(unittest.TestCase):
+    def report(self, **overrides):
+        report = {
+            "metadata": {
+                "hostname": "test-host",
+                "output_dir": "/tmp/report",
+                "output_fallback_reason": None,
+            },
+            "selected_modules": ["system", "cpu", "memory", "disk_space"],
+            "skipped_modules": {},
+            "dependencies": {"status": "ok", "package_manager": "apt", "tools": []},
+            "modules": {
+                "system": {"status": "ok"},
+                "cpu": {"status": "ok"},
+                "memory": {"status": "ok"},
+                "disk_space": {"status": "ok", "scan_tasks": []},
+            },
+            "issues": [],
+        }
+        report.update(overrides)
+        return report
+
+    def test_healthy_report_uses_positive_conclusion(self):
+        summary = REPORT.build_summary(self.report())
+        self.assertEqual(summary["status"], "ok")
+        self.assertEqual(summary["items"], [])
+        self.assertEqual(summary["conclusion"], "服务运行正常，继续保持！")
+
+    def test_threshold_issues_become_summary_items(self):
+        issues = [
+            {
+                "severity": "critical",
+                "module": "cpu",
+                "metric": "CPU 平均使用率",
+                "value": "96.72%",
+                "basis": "警告 80.0% / 严重 90.0%",
+                "window": "3.0 秒",
+                "message": "message",
+                "suggestion": "suggestion",
+            },
+            {
+                "severity": "info",
+                "module": "cpu",
+                "metric": "提示项",
+                "value": 1,
+                "basis": "basis",
+                "window": "window",
+                "message": "message",
+                "suggestion": "suggestion",
+            },
+        ]
+        summary = REPORT.build_summary(self.report(issues=issues))
+        self.assertEqual(summary["status"], "risk")
+        self.assertEqual(len(summary["items"]), 1)
+        self.assertIn("CPU 使用分析：CPU 平均使用率 96.72%", summary["items"][0]["text"])
+        self.assertIn("依据：警告 80.0% / 严重 90.0%", summary["items"][0]["text"])
+        self.assertIsNone(summary["conclusion"])
+        self.assertEqual(summary["counts"], {"critical": 1, "warning": 0, "info": 0})
+
+    def test_collection_anomalies_are_listed_and_sorted_by_severity(self):
+        report = self.report()
+        report["modules"]["system"] = {"status": "failed", "error": "boom"}
+        report["modules"]["memory"] = {"status": "skipped", "error": "用户中断该模块"}
+        report["modules"]["disk_space"] = {
+            "status": "ok",
+            "scan_tasks": [{"root": "/www", "status": "incomplete", "duration_seconds": 12.0}],
+        }
+        report["dependencies"] = {
+            "status": "failed",
+            "tools": [
+                {
+                    "command": "iostat",
+                    "package": "sysstat",
+                    "status": "failed",
+                    "manual_install_command": "apt-get update && apt-get install -y sysstat",
+                }
+            ],
+        }
+        report["metadata"]["output_fallback_reason"] = "默认输出目录 /www/server/log 不可写"
+        summary = REPORT.build_summary(report)
+        severities = [item["severity"] for item in summary["items"]]
+        self.assertEqual(severities, sorted(severities, key=lambda value: REPORT.SEVERITY_ORDER[value]))
+        texts = " ".join(item["text"] for item in summary["items"])
+        self.assertIn("系统概要：采集失败（boom）", texts)
+        self.assertIn("目录扫描未完成：/www", texts)
+        self.assertIn("依赖工具 iostat（sysstat）安装后仍不可用", texts)
+        self.assertIn("内存使用分析：未执行", texts)
+        self.assertIn("报告输出目录已回退到", texts)
+        self.assertEqual(summary["counts"], {"critical": 1, "warning": 2, "info": 2})
+
+    def test_text_and_html_render_summary_block(self):
+        report = self.report()
+        report["modules"]["cpu"] = {"status": "failed", "error": "boom"}
+        report["summary"] = REPORT.build_summary(report)
+        text = REPORT.render_text(report)
+        html_text = REPORT.render_html(report, text)
+        self.assertIn("【概要信息】", text)
+        self.assertIn("- 【严重】CPU 使用分析：采集失败（boom）", text)
+        self.assertIn("概要信息", html_text)
+        self.assertIn("class='critical'", html_text)
+        healthy = self.report()
+        healthy_text = REPORT.render_text(healthy)
+        self.assertIn("服务运行正常，继续保持！", healthy_text)
+        self.assertIn("class='ok'", REPORT.render_html(healthy, healthy_text))
+
+    def test_main_attaches_summary_to_report(self):
+        captured = {}
+        report = self.report()
+
+        def fake_save(report_data, output_dir):
+            captured["report"] = report_data
+            return {"txt": "/tmp/report.txt"}, {}
+
+        with mock.patch.object(REPORT, "build_report", return_value=report), mock.patch.object(
+            REPORT, "prepare_dependencies", return_value={"status": "ok", "tools": []}
+        ), mock.patch.object(REPORT, "ensure_output_dir", return_value=("/tmp/report", None)), mock.patch.object(
+            REPORT, "save_reports", side_effect=fake_save
+        ), mock.patch.object(REPORT, "print_execution_summary"), mock.patch.object(
+            REPORT, "print_dependency_summary"
+        ), mock.patch.object(REPORT, "print_final_summary"):
+            code = REPORT.main(["--non-interactive", "--modules", "cpu"])
+        self.assertEqual(code, 0)
+        self.assertIn("summary", captured["report"])
 
 
 if __name__ == "__main__":
