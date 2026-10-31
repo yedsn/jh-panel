@@ -61,17 +61,17 @@ docker/logs
 docker/state
 ```
 
-镜像只保存软件和脚本；数据库数据、备份、配置和运行状态不得只存在于容器可写层。普通的 `docker compose down` 和强制重建不得删除这些目录。只有显式的 `environment-reset.sh` 才可清除实验数据，并且必须显示目标绝对路径、要求二次确认，不得接受空路径、根目录或工作区上级目录。
+镜像只保存软件和脚本；数据库数据、备份、配置和运行状态不得只存在于容器可写层。普通的 `docker compose down` 和强制重建不得删除这些目录。只有显式的 `1-8.environment-reset.sh` 才可清除实验数据，并且必须显示目标绝对路径、要求二次确认，不得接受空路径、根目录或工作区上级目录。
 
 ### 4. 从库容器在复制初始化前保持等待状态
 
-初次启动时 node-a 按官方入口初始化为独立主库。node-b 在数据目录为空时进入可观察的等待状态，不自动初始化成第二个独立主库。`replication-init.sh` 负责创建复制账号、准备访问规则、从 node-a 获取基础数据、写入 `standby.signal` 与连接配置，然后重启 node-b 进入恢复模式。
+初次启动时 node-a 按官方入口初始化为独立主库。node-b 在数据目录为空时进入可观察的等待状态，不自动初始化成第二个独立主库。`4-1.replication-init.sh` 负责创建复制账号、准备访问规则、从 node-a 获取基础数据、写入 `standby.signal` 与连接配置，然后重启 node-b 进入恢复模式。
 
 这避免 Compose 首次启动时出现两个可写主库，也让学习者能够清楚看到“基础备份 + standby 标记 + 上游连接”组成物理从库的过程。
 
 ### 5. 逻辑备份只覆盖单数据库
 
-`backup-database-create.sh` 使用 `pg_dump --format=custom` 备份指定数据库；`backup-database-restore.sh` 使用 `pg_restore`，默认恢复到新建的目标数据库，不覆盖源库。`backup-database-verify.sh` 对比 schema、表数量和教学数据。
+`2-1.backup-database-create.sh` 使用 `pg_dump --format=custom` 备份指定数据库；`2-3.backup-database-restore.sh` 使用 `pg_restore`，默认恢复到新建的目标数据库，不覆盖源库。`2-4.backup-database-verify.sh` 对比 schema、表数量和教学数据。
 
 单表备份不在范围内。逻辑备份不能作为 pgBackRest 增量备份的基础，也不宣称能完整保存实例级角色、表空间和物理状态。
 
@@ -81,41 +81,41 @@ docker/state
 
 备份脚本始终动态选择当前主库执行。第一版提供：
 
-- `pgbackrest-backup-full.sh`：创建普通 Full，既可独立恢复，也是后续 Incremental 的基础。
-- `pgbackrest-backup-incremental.sh`：创建 Incremental；脚本在执行前明确检查存在有效 Full，否则停止并指导先执行 Full。
+- `3-3.pgbackrest-backup-full.sh`：创建普通 Full，既可独立恢复，也是后续 Incremental 的基础。
+- `3-4.pgbackrest-backup-incremental.sh`：创建 Incremental；脚本在执行前明确检查存在有效 Full，否则停止并指导先执行 Full。
 
 不设置“增量专用全量”脚本。第一版也不提供 Differential，避免扩大教学范围。
 
 ### 7. 物理恢复通过隔离验证实例完成
 
-`pgbackrest-restore-verify.sh` 不覆盖正在运行的 node-a 或 node-b，而是恢复到 `data/restore-verify`，使用独立的一次性验证容器启动并执行 SQL 检查。需要人工远程检查时，可以发布单独的可配置验证端口；默认验证完成后停止验证实例，但保留日志和结果摘要。
+`3-6.pgbackrest-restore-verify.sh` 不覆盖正在运行的 node-a 或 node-b，而是恢复到 `data/restore-verify`，使用独立的一次性验证容器启动并执行 SQL 检查。需要人工远程检查时，可以发布单独的可配置验证端口；默认验证完成后停止验证实例，但保留日志和结果摘要。
 
 恢复目标可以是最新备份或指定备份标签。脚本只要求用户选择目标，pgBackRest 根据元数据自动解析 Full 和 Incremental 依赖链，用户无需手工逐层拼接。
 
 ### 8. 主从修复提供三条明确路径
 
-1. `replication-rebuild-standby-from-primary.sh` 使用 `pg_basebackup` 从当前主库重新建立从库，流程直接但会读取主库全量数据。
-2. `replication-repair-standby-from-pgbackrest.sh` 从 pgBackRest 恢复物理备份，再通过归档和流复制追平，接近生产环境中的低主库压力修复方式。
-3. `replication-rejoin-old-primary-with-pg-rewind.sh` 用于主从切换或时间线分叉后的旧主重接；先执行 `pg_rewind`，失败时停止并指导使用完整重建，不使用 `pg_resetwal` 或跳过 WAL。
+1. `5-2.replication-rebuild-standby-from-primary.sh` 使用 `pg_basebackup` 从当前主库重新建立从库，流程直接但会读取主库全量数据。
+2. `5-3.replication-repair-standby-from-pgbackrest.sh` 从 pgBackRest 恢复物理备份，再通过归档和流复制追平，接近生产环境中的低主库压力修复方式。
+3. `5-4.replication-rejoin-old-primary-with-pg-rewind.sh` 用于主从切换或时间线分叉后的旧主重接；先执行 `pg_rewind`，失败时停止并指导使用完整重建，不使用 `pg_resetwal` 或跳过 WAL。
 
 初始化时启用数据校验和或 `wal_log_hints=on`，确保 `pg_rewind` 具备前置条件。修复脚本必须确认目标节点不是当前可写主库，并在替换数据目录前保留可识别的旧目录或明确执行可恢复的隔离步骤。
 
 ### 9. 计划内切换使用“检查、切换、验证”三段式
 
-`switchover-check-readiness.sh` 检查单主单从拓扑、复制连接、WAL 接收/回放、延迟、归档和备份仓库。`switchover-execute.sh` 暂停 Demo 写入、执行检查点、等待从库追平、正常停止旧主、提升原从库，并用 `pg_rewind` 将旧主对齐后配置为新主的从库。`switchover-verify.sh` 验证新主可写、旧主处于 recovery、新写入能够复制到旧主。
+`6-1.switchover-check-readiness.sh` 检查单主单从拓扑、复制连接、WAL 接收/回放、延迟、归档和备份仓库。`6-2.switchover-execute.sh` 暂停 Demo 写入、执行检查点、等待从库追平、正常停止旧主、提升原从库，并用 `pg_rewind` 将旧主对齐后配置为新主的从库。`6-3.switchover-verify.sh` 验证新主可写、旧主处于 recovery、新写入能够复制到旧主。
 
 提升操作会使被提升节点自动移除自身的 `standby.signal`。旧主不得仅通过设置普通只读参数来假装从库；它必须经过数据对齐、写入 standby 配置并以恢复模式启动。切换脚本在任一步失败时保持业务写入暂停并输出当前状态与人工处理建议，不得在拓扑不确定时自动继续。
 
 ### 10. 统一脚本命名与教学日志协议
 
-用户脚本采用 `<功能域>-<动作>-<补充>.sh`，例如：
+用户入口脚本采用 `<组号>-<组内序号>.<功能域>-<动作>-<补充>.sh`。编号与 `.vscode/launch.json` 的调试入口一致，便于从运行菜单直接定位脚本；同一脚本的普通、JSON、试运行和实际执行模式共用同一个编号。例如：
 
-- `environment-start.sh`
-- `backup-database-create.sh`
-- `pgbackrest-backup-full.sh`
-- `replication-init.sh`
-- `replication-repair-standby-from-pgbackrest.sh`
-- `switchover-execute.sh`
+- `1-2.environment-start.sh`
+- `2-1.backup-database-create.sh`
+- `3-3.pgbackrest-backup-full.sh`
+- `4-1.replication-init.sh`
+- `5-3.replication-repair-standby-from-pgbackrest.sh`
+- `6-2.switchover-execute.sh`
 
 共享库放在 `scripts/common/`，由目录表达其公共属性，文件使用 `config.sh`、`docker.sh`、`postgresql.sh` 等简洁名称且不作为用户入口。每个用户脚本至少支持 `--help`；涉及初始化、清空、恢复、修复和切换的脚本支持 `--pause`、`--yes`、`--verbose` 和 `--dry-run`。
 

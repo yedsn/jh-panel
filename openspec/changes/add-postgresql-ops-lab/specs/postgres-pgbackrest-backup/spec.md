@@ -32,7 +32,7 @@
 #### Scenario: 没有 Full 时请求 Incremental
 - **WHEN** 仓库中不存在有效 Full
 - **THEN** 教学脚本不依赖 pgBackRest 静默改做 Full
-- **THEN** 脚本停止并指导用户先运行 `pgbackrest-backup-full.sh`
+- **THEN** 脚本停止并指导用户先运行 `3-3.pgbackrest-backup-full.sh`
 
 ### Requirement: 备份链信息与检查
 系统 SHALL 提供人类可读的备份链信息，并提供适合后续自动化消费的 JSON 状态输出。
